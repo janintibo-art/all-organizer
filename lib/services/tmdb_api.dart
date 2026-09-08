@@ -18,6 +18,9 @@ class TmdbApi {
   /// Page où récupérer une clé gratuite.
   static const String keyUrl = 'https://www.themoviedb.org/settings/api';
 
+  /// Mot-clé « anime » du catalogue TMDB, pour ne pas ramener toute la télé.
+  static const String _animeKeyword = '210024';
+
   static String? lastError;
   static Map<int, String> _movieGenres = {};
   static Map<int, String> _tvGenres = {};
@@ -148,6 +151,37 @@ class TmdbApi {
     final results = body?['results'] as List? ?? const [];
     return results
         .map((e) => _map(Map<String, dynamic>.from(e as Map), forceSeries: series))
+        .whereType<MediaMeta>()
+        .toList();
+  }
+
+  /// Correspondance entre les tris d'AniList et ceux de TMDB.
+  static const Map<String, String> _animeSorts = {
+    'TRENDING_DESC': 'popularity.desc',
+    'POPULARITY_DESC': 'popularity.desc',
+    'SCORE_DESC': 'vote_average.desc',
+    'START_DATE_DESC': 'first_air_date.desc',
+    'FAVOURITES_DESC': 'vote_count.desc',
+  };
+
+  /// Secours de l'onglet Découvrir côté animation : uniquement les séries
+  /// portant le mot-clé « anime », triées comme sur AniList.
+  static Future<List<MediaMeta>> browse(
+    String apiKey, {
+    int page = 1,
+    String sort = 'TRENDING_DESC',
+  }) async {
+    await ensureGenres(apiKey);
+    final body = await _get('/3/discover/tv', apiKey, {
+      'with_keywords': _animeKeyword,
+      'sort_by': _animeSorts[sort] ?? 'popularity.desc',
+      'page': '$page',
+      'include_adult': 'false',
+      'vote_count.gte': sort == 'SCORE_DESC' ? '200' : '20',
+    });
+    final results = body?['results'] as List? ?? const [];
+    return results
+        .map((e) => _map(Map<String, dynamic>.from(e as Map), forceSeries: true))
         .whereType<MediaMeta>()
         .toList();
   }
