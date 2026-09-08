@@ -9,6 +9,7 @@ import '../models/media_item.dart';
 import '../models/media_meta.dart';
 import '../main.dart';
 import '../models/labels.dart';
+import '../models/library_folder.dart';
 import '../models/server_profile.dart';
 import 'metadata_service.dart';
 import 'music_controller.dart';
@@ -144,7 +145,7 @@ class AppSettings {
 
 class LibraryController extends ChangeNotifier {
   List<MediaItem> items = [];
-  List<String> folders = [];
+  List<LibraryFolder> folders = [];
   List<ServerProfile> servers = [];
 
   /// Series reperees dans l'onglet Decouvrir et mises de cote.
@@ -207,7 +208,14 @@ class LibraryController extends ChangeNotifier {
   Future<bool> _loadFrom(File file) async {
     try {
       final data = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      folders = (data['folders'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      // Les anciennes sauvegardes ne stockaient qu'un chemin : on les
+      // reprend en les classant en séries, à charge de corriger.
+      folders = (data['folders'] as List? ?? []).map((e) {
+        if (e is String) {
+          return LibraryFolder(path: e, kind: MediaKind.series);
+        }
+        return LibraryFolder.fromJson(Map<String, dynamic>.from(e as Map));
+      }).toList();
       servers = (data['servers'] as List? ?? [])
           .map((e) =>
               ServerProfile.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -242,7 +250,7 @@ class LibraryController extends ChangeNotifier {
       final f = await _storeFile();
       final tmp = File('${f.path}.tmp');
       await tmp.writeAsString(jsonEncode({
-        'folders': folders,
+        'folders': folders.map((f) => f.toJson()).toList(),
         'servers': servers.map((s) => s.toJson()).toList(),
         'settings': settings.toJson(),
         'items': items.map((a) => a.toJson()).toList(),
@@ -272,20 +280,44 @@ class LibraryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> addFolder(String path) async {
-    if (folders.contains(path)) return;
-    folders.add(path);
+  Future<void> addFolder(String path,
+      {required MediaKind kind, bool kids = false}) async {
+    if (folders.any((f) => f.path == path)) return;
+    folders.add(LibraryFolder(path: path, kind: kind, kids: kids));
     await save();
     notifyListeners();
   }
 
+  /// Dossiers d'une section donnée.
+  List<LibraryFolder> foldersOf({MediaKind? kind, bool kidsOnly = false}) {
+    return folders.where((f) {
+      if (kidsOnly) return f.kids;
+      if (f.kids) return false;
+      return kind == null || f.kind == kind;
+    }).toList();
+  }
+
   Future<void> removeFolder(String path, {bool dropEntries = true}) async {
-    folders.remove(path);
+    folders.removeWhere((f) => f.path == path);
     if (dropEntries) {
       items.removeWhere((a) => p.isWithin(path, a.id) || p.equals(path, a.id));
     }
     await save();
     notifyListeners();
+  }
+
+  /// Dossier surveillé auquel appartient un chemin.
+  LibraryFolder? _folderOf(String chemin) {
+    LibraryFolder? meilleur;
+    for (final f in folders) {
+      if (!p.equals(f.path, chemin) && !p.isWithin(f.path, chemin)) continue;
+      // Le dossier le plus profond gagne : deux dossiers imbriqués peuvent
+      // être déclarés dans des sections différentes.
+      if (meilleur == null || f.path.length > meilleur.path.length) {
+        meilleur = f;
+      }
+    }
+    return meilleur;
   }
 
   /// Scanne les dossiers, fusionne avec l'existant, puis complete les fiches.
@@ -299,7 +331,7 @@ class LibraryController extends ChangeNotifier {
       final reachable = <String>[];
       final unreachable = <String>[];
       for (final f in folders) {
-        (Directory(f).existsSync() ? reachable : unreachable).add(f);
+        (Directory(f.path).existsSync() ? reachable : unreachable).add(f.path);
       }
       unreachableFolders = unreachable;
 
@@ -315,10 +347,20 @@ class LibraryController extends ChangeNotifier {
       var discovered = 0;
 
       for (final item in found) {
+        // La nature vient du dossier surveillé, pas d'une déduction sur les
+        // fichiers : un dossier ajouté depuis Animes ne donne que des animes.
+        final dossier = _folderOf(item.id);
+        if (dossier != null) {
+          item.kind = dossier.kind;
+          if (dossier.kids && !item.kidsManual) item.kids = true;
+        }
+
         final old = existing[item.id];
         if (old != null) {
           old.episodes = item.episodes;
           old.folderTitle = item.folderTitle;
+          old.kind = item.kind;
+          if (!old.kidsManual) old.kids = item.kids;
           merged.add(old);
         } else {
           merged.add(item);
@@ -616,7 +658,7 @@ class LibraryController extends ChangeNotifier {
   Map<String, dynamic> _snapshot() => {
         'version': 1,
         'exportedAt': DateTime.now().toIso8601String(),
-        'folders': folders,
+        'folders': folders.map((f) => f.toJson()).toList(),
         'settings': settings.toJson(),
         'items': items.map((a) => a.toJson()).toList(),
         'wishlist': wishlist.map((w) => w.toJson()).toList(),
@@ -647,8 +689,11 @@ class LibraryController extends ChangeNotifier {
 
     if (!merge) {
       items = incoming;
-      folders = (data['folders'] as List?)?.map((e) => e.toString()).toList() ??
-          folders;
+      folders = (data['folders'] as List? ?? [])
+          .map((e) => e is String
+              ? LibraryFolder(path: e, kind: MediaKind.series)
+              : LibraryFolder.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
     } else {
       final byId = {for (final a in items) a.id: a};
       for (final b in incoming) {

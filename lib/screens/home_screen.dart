@@ -8,6 +8,8 @@ import '../models/media_item.dart';
 import '../services/library_controller.dart';
 import '../widgets/media_card.dart';
 import 'detail_screen.dart';
+import 'anime_discover_screen.dart';
+import 'discover_screen.dart';
 import 'folder_picker_screen.dart';
 import 'settings_screen.dart';
 
@@ -19,12 +21,17 @@ class HomeScreen extends StatefulWidget {
   final String title;
   final String subtitle;
 
+  /// Bannière propre à la section : on retrouve l'identité de l'application
+  /// d'origine en entrant dans Animes, Films ou Séries.
+  final String logo;
+
   const HomeScreen({
     super.key,
     this.kind,
     this.kidsOnly = false,
-    this.title = 'Media Organizer',
+    this.title = 'All Organizer',
     this.subtitle = '',
+    this.logo = 'assets/logo.png',
   });
 
   @override
@@ -92,7 +99,8 @@ class _HomeScreenState extends State<HomeScreen> {
       MaterialPageRoute(builder: (_) => const FolderPickerScreen()),
     );
     if (dir == null) return;
-    await library.addFolder(dir);
+    await library.addFolder(dir,
+        kind: widget.kind ?? MediaKind.movie, kids: widget.kidsOnly);
     await library.scan();
   }
 
@@ -115,17 +123,13 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Row(
                   children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(radiusSm),
-                      child: Image.asset('assets/icon.png',
-                          width: 24, height: 24, fit: BoxFit.cover),
-                    ),
-                    const SizedBox(width: 9),
-                    const Text('MediaItem Organizer'),
+                    Container(width: 3, height: 18, color: Palette.shu),
+                    const SizedBox(width: 8),
+                    Text(widget.title),
                   ],
                 ),
                 Padding(
-                  padding: const EdgeInsets.only(left: 33, top: 1),
+                  padding: const EdgeInsets.only(left: 11, top: 1),
                   child: Text(
                     _countLabel(),
                     style: TextStyle(
@@ -143,6 +147,20 @@ class _HomeScreenState extends State<HomeScreen> {
                 tooltip: 'Relancer le scan',
                 onPressed: library.busy ? null : () => library.scan(),
                 icon: const Icon(Icons.refresh),
+              ),
+              IconButton(
+                tooltip: 'Découvrir',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => widget.kind == MediaKind.anime
+                        ? const AnimeDiscoverScreen()
+                        : DiscoverScreen(
+                            series: widget.kind == MediaKind.series,
+                            kidsOnly: widget.kidsOnly,
+                          ),
+                  ),
+                ),
+                icon: const Icon(Icons.explore_outlined),
               ),
               IconButton(
                 tooltip: 'Réglages',
@@ -553,7 +571,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(Palette.logo, width: 240, fit: BoxFit.contain),
+            Image.asset(widget.logo, width: 250, fit: BoxFit.contain),
             const SizedBox(height: 24),
             const Text(
               'Ta bibliothèque est vide',

@@ -210,7 +210,7 @@ class _TracksScreenState extends State<TracksScreen> {
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(radiusSm),
-                child: Image.asset('assets/icon.png',
+                child: Image.asset('assets/logo_music.png',
                     width: 24, height: 24, fit: BoxFit.cover),
               ),
               const SizedBox(width: 9),
@@ -436,7 +436,7 @@ class _TracksScreenState extends State<TracksScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Image.asset(Palette.logo, width: 240, fit: BoxFit.contain),
+            Image.asset('assets/logo_music.png', width: 250, fit: BoxFit.contain),
             const SizedBox(height: 24),
             Text('Ta bibliothèque est vide',
                 style: TextStyle(

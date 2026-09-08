@@ -140,11 +140,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       dense: true,
                       leading:
                           Icon(Icons.folder_outlined, color: Palette.kin),
-                      title: Text(f, style: const TextStyle(fontSize: 12.5)),
+                      title: Text(f.path,
+                          style: const TextStyle(fontSize: 12.5)),
+                      subtitle: Text(f.kindLabel,
+                          style: TextStyle(
+                              color: Palette.kin, fontSize: 11)),
                       trailing: IconButton(
                         icon: Icon(Icons.close,
                             color: Palette.muted, size: 18),
-                        onPressed: () => _confirmRemoveFolder(f),
+                        onPressed: () => _confirmRemoveFolder(f.path),
                       ),
                     ),
                   _switch(

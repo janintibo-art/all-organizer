@@ -7,7 +7,6 @@ import '../services/music_controller.dart';
 import '../widgets/mini_player.dart';
 import 'albums_screen.dart';
 import 'artists_screen.dart';
-import 'discover_screen.dart';
 import 'home_screen.dart';
 import 'playlists_screen.dart';
 import 'servers_screen.dart';
@@ -38,21 +37,25 @@ class _RootScreenState extends State<RootScreen> {
       kind: MediaKind.anime,
       title: 'Animes',
       subtitle: 'Animation japonaise',
+      logo: 'assets/logo_anime.png',
     ),
     HomeScreen(
       kind: MediaKind.movie,
       title: 'Films',
       subtitle: 'Longs métrages',
+      logo: 'assets/logo_media.png',
     ),
     HomeScreen(
       kind: MediaKind.series,
       title: 'Séries',
       subtitle: 'Séries et feuilletons',
+      logo: 'assets/logo_media.png',
     ),
     HomeScreen(
       kidsOnly: true,
       title: 'Jeunesse',
       subtitle: 'Tous publics',
+      logo: 'assets/logo_media.png',
     ),
   ];
 
@@ -74,7 +77,6 @@ class _RootScreenState extends State<RootScreen> {
             children: [
               _sectionVideo(),
               _sectionMusique(),
-              const DiscoverScreen(),
               const ServersScreen(),
             ],
           ),
@@ -105,11 +107,6 @@ class _RootScreenState extends State<RootScreen> {
                       icon: Icon(Icons.music_note_outlined),
                       activeIcon: Icon(Icons.music_note),
                       label: 'Musique',
-                    ),
-                    BottomNavigationBarItem(
-                      icon: Icon(Icons.explore_outlined),
-                      activeIcon: Icon(Icons.explore),
-                      label: 'Découvrir',
                     ),
                     BottomNavigationBarItem(
                       icon: Icon(Icons.dns_outlined),

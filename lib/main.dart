@@ -266,7 +266,7 @@ class AllOrganizerApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'MediaItem Organizer',
+      title: 'All Organizer',
       debugShowCheckedModeBanner: false,
       theme: base.copyWith(
         bottomSheetTheme:

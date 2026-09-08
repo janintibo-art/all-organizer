@@ -12,7 +12,16 @@ import 'discover_detail_screen.dart';
 /// Catalogue TMDB : films et séries, avec un mode « sorties » pour les
 /// séries en cours de diffusion et une liste « à voir ».
 class DiscoverScreen extends StatefulWidget {
-  const DiscoverScreen({super.key});
+  /// Prereglages de la section d'ou l'on vient : series ou films, et
+  /// restriction jeunesse le cas echeant.
+  final bool series;
+  final bool kidsOnly;
+
+  const DiscoverScreen({
+    super.key,
+    this.series = false,
+    this.kidsOnly = false,
+  });
 
   @override
   State<DiscoverScreen> createState() => _DiscoverScreenState();
@@ -22,10 +31,10 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
   final _scroll = ScrollController();
   final _searchController = TextEditingController();
 
-  bool _series = false;
+  late bool _series = widget.series;
   String _sort = 'popularity.desc';
   int? _genreId;
-  bool _kidsOnly = false;
+  late bool _kidsOnly = widget.kidsOnly;
   String _search = '';
   bool _wishlistOnly = false;
   bool _releasesMode = false;
