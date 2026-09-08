@@ -140,7 +140,7 @@ class _TracksScreenState extends State<TracksScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: library,
+      animation: music,
       builder: (context, _) {
         final items = music.view(
           query: _query,

@@ -96,7 +96,7 @@ class _ServersScreenState extends State<ServersScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: app,
+      animation: library,
       builder: (context, _) {
         return Scaffold(
           appBar: darkAppBar(

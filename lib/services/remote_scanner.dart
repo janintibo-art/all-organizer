@@ -125,7 +125,16 @@ class RemoteScanner {
         ));
       }
 
-      episodes.sort((a, b) => a.sortKey.compareTo(b.sortKey));
+      episodes.sort((a, b) {
+        if (a.bonus != b.bonus) return a.bonus ? 1 : -1;
+        final sa = a.season ?? 1;
+        final sb = b.season ?? 1;
+        if (sa != sb) return sa.compareTo(sb);
+        final na = a.number ?? 9999;
+        final nb = b.number ?? 9999;
+        if (na != nb) return na.compareTo(nb);
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
 
       // Un fichier isolé sans numéro : c'est un film.
       final numerotes =
@@ -139,7 +148,6 @@ class RemoteScanner {
         serverId: server.id,
         kind: nature ?? deduite,
         folderTitle: titre,
-        title: titre,
         episodes: episodes,
       ));
     }

@@ -1,3 +1,5 @@
+import 'media_meta.dart';
+
 class Episode {
   final String path;
   final String name;

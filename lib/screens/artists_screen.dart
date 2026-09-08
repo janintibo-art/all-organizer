@@ -20,7 +20,7 @@ class _ArtistsScreenState extends State<ArtistsScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: library,
+      animation: music,
       builder: (context, _) {
         final q = _query.trim().toLowerCase();
         final artistes = music.artists.entries

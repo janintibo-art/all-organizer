@@ -20,7 +20,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: library,
+      animation: music,
       builder: (context, _) {
         final q = _query.trim().toLowerCase();
         final albums = music.albums

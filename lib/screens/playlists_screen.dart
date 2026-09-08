@@ -88,7 +88,7 @@ class _PlaylistsScreenState extends State<PlaylistsScreen> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: library,
+      animation: music,
       builder: (context, _) {
         return Scaffold(
           appBar: darkAppBar(
@@ -283,7 +283,7 @@ class PlaylistScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: library,
+      animation: music,
       builder: (context, _) {
         final morceaux = music.tracksOf(playlist);
         final manquants = music.missingIn(playlist);
