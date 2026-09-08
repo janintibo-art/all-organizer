@@ -1,5 +1,5 @@
 name: all_organizer
-description: Bibliotheque unique : animes, films, series, jeunesse et musique, en local et sur serveur.
+description: "Bibliotheque unique : animes, films, series, jeunesse et musique, en local et sur serveur."
 publish_to: 'none'
 version: 1.0.0+1
 
