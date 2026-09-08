@@ -1,0 +1,7 @@
+# Configuration d'icones reservee au job Windows : le job ne genere pas le
+# dossier android, il ne faut donc pas lui demander les icones Android.
+flutter_launcher_icons:
+  windows:
+    generate: true
+    image_path: "assets/icon.png"
+    icon_size: 256

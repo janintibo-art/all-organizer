@@ -1,0 +1,120 @@
+name: Compiler APK et EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  APP_ORG: com.allorganizer
+  APP_NAME: all_organizer
+
+jobs:
+  android:
+    name: APK Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Version de Flutter utilisee
+        run: flutter --version
+
+      - name: Generer le dossier android
+        shell: bash
+        run: |
+          cp pubspec.yaml /tmp/pubspec.yaml
+          cp -r lib /tmp/lib_backup
+          flutter create --org "$APP_ORG" --project-name "$APP_NAME" --platforms=android .
+          cp /tmp/pubspec.yaml pubspec.yaml
+          rm -rf lib && cp -r /tmp/lib_backup lib
+
+      - name: Ajouter les permissions
+        run: python3 tool/patch_android.py
+
+      - name: Recuperer les dependances
+        run: flutter pub get
+
+      - name: Generer les icones
+        run: dart run flutter_launcher_icons
+
+      - name: Compiler l'APK
+        run: >
+          flutter build apk --release
+          --build-name=1.${{ github.run_number }}.0
+          --build-number=${{ github.run_number }}
+
+      - name: Renommer l'APK
+        shell: bash
+        run: cp build/app/outputs/flutter-apk/app-release.apk AllOrganizer.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AllOrganizer-Android
+          path: AllOrganizer.apk
+          retention-days: 30
+
+  windows:
+    name: EXE Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Version de Flutter utilisee
+        run: flutter --version
+
+      - name: Generer le dossier windows
+        shell: bash
+        run: |
+          cp pubspec.yaml /tmp/pubspec.yaml
+          cp -r lib /tmp/lib_backup
+          flutter create --org "$APP_ORG" --project-name "$APP_NAME" --platforms=windows .
+          cp /tmp/pubspec.yaml pubspec.yaml
+          rm -rf lib && cp -r /tmp/lib_backup lib
+
+      - name: Nom de la fenetre
+        shell: bash
+        run: sed -i 's/L"all_organizer"/L"All Organizer"/' windows/runner/main.cpp
+
+      - name: Activer la cible Windows
+        run: flutter config --enable-windows-desktop
+
+      - name: Recuperer les dependances
+        run: flutter pub get
+
+      - name: Generer l'icone Windows
+        run: dart run flutter_launcher_icons -f icons_windows.yaml
+
+      - name: Compiler l'application
+        env:
+          # Visual Studio 2026 refuse <experimental/coroutine>, utilise par
+          # permission_handler. Cette definition leve le blocage.
+          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
+        run: >
+          flutter build windows --release
+          --build-name=1.${{ github.run_number }}.0
+          --build-number=${{ github.run_number }}
+
+      - name: Compresser l'application
+        shell: pwsh
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath AllOrganizer-Windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AllOrganizer-Windows
+          path: AllOrganizer-Windows.zip
+          retention-days: 30
