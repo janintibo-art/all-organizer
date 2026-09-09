@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
+import 'dart:async';
+
 import 'screens/splash_screen.dart';
+import 'services/anime_index.dart';
 import 'services/audio_player_service.dart';
 import 'services/library_controller.dart';
 import 'services/music_controller.dart';
+import 'services/seed_database.dart';
 
 /// Un thème complet.
 ///
@@ -225,9 +229,21 @@ Future<void> main() async {
   }
 
   try {
+    await SeedDatabase.load();
+  } catch (e) {
+    startupErrors.add('Base locale : $e');
+  }
+
+  try {
     await library.load();
   } catch (e) {
     startupErrors.add('Bibliothèque : $e');
+  }
+
+  // L'index complet est volumineux : on le charge en arriere-plan, la
+  // bibliotheque s'affiche sans l'attendre.
+  if (library.settings.useIndex) {
+    unawaited(AnimeIndex.load());
   }
 
   try {

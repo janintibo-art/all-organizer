@@ -11,6 +11,7 @@ import '../main.dart';
 import '../models/labels.dart';
 import '../models/library_folder.dart';
 import '../models/server_profile.dart';
+import 'anime_index.dart';
 import 'metadata_service.dart';
 import 'music_controller.dart';
 import 'remote_scanner.dart';
@@ -20,6 +21,7 @@ import 'tmdb_api.dart';
 import 'ai_service.dart';
 import 'poster_cache.dart';
 import 'scanner.dart';
+import 'seed_database.dart';
 import 'translate_api.dart';
 
 /// Instance unique utilisee par toute l'application.
@@ -61,6 +63,8 @@ class AppSettings {
   String metaSource = 'auto';
   // auto | anilist | jikan | kitsu | animethemes | tmdb — animes japonais
   String animeSource = 'auto';
+  bool useIndex = true;
+  String indexRepo = AnimeIndex.defaultRepo;
   String tmdbKey = '';
   String themeId = 'encre';
   bool autoWake = true;
@@ -98,6 +102,8 @@ class AppSettings {
         'aiWebSearch': aiWebSearch,
         'metaSource': metaSource,
         'animeSource': animeSource,
+        'useIndex': useIndex,
+        'indexRepo': indexRepo,
         'tmdbKey': tmdbKey,
         'themeId': themeId,
         'autoWake': autoWake,
@@ -137,6 +143,8 @@ class AppSettings {
     s.aiWebSearch = j['aiWebSearch'] as bool? ?? true;
     s.metaSource = j['metaSource'] as String? ?? 'auto';
     s.animeSource = j['animeSource'] as String? ?? 'auto';
+    s.useIndex = j['useIndex'] as bool? ?? true;
+    s.indexRepo = j['indexRepo'] as String? ?? AnimeIndex.defaultRepo;
     s.tmdbKey = j['tmdbKey'] as String? ?? '';
     s.themeId = j['themeId'] as String? ?? 'encre';
     s.autoWake = j['autoWake'] as bool? ?? true;
@@ -418,7 +426,21 @@ class LibraryController extends ChangeNotifier {
     var resolved = overrideQuery ?? recall(item.folderTitle);
 
     // 2. La base locale : elle traduit un titre francais en romaji,
-    //    ce que les bases en ligne savent chercher.
+    //    ce que les bases en ligne savent chercher. Reservee aux animes :
+    //    elle ne connait que des series japonaises.
+    SeedEntry? seed;
+    IndexEntry? indexed;
+    if (resolved == null && item.kind == MediaKind.anime) {
+      seed = SeedDatabase.match(item.folderTitle, episodeCount: count);
+      if (seed != null) {
+        resolved = seed.searchQuery;
+      } else if (settings.useIndex && AnimeIndex.isLoaded) {
+        // 40 000 series connues hors connexion, affiche comprise.
+        indexed = AnimeIndex.match(item.folderTitle, episodeCount: count);
+        if (indexed != null) resolved = indexed.searchQuery;
+      }
+    }
+
     var meta = await MetadataService.smartSearch(
       resolved ?? query,
       source: settings.metaSource,
@@ -432,6 +454,26 @@ class LibraryController extends ChangeNotifier {
 
     // 3. Rien en ligne mais la base locale connait la serie : on l'applique
     //    telle quelle, quitte a completer l'affiche plus tard.
+    if (meta == null && seed != null) {
+      applyMeta(item, seed.toMeta());
+      item.frenchTitle = seed.french;
+      remember(item.folderTitle, seed.searchQuery);
+      if (persist) await save();
+      notifyListeners();
+      return;
+    }
+
+    // L'index porte deja l'affiche : la fiche est utilisable telle quelle.
+    if (meta == null && indexed != null) {
+      applyMeta(item, indexed.toMeta());
+      remember(item.folderTitle, indexed.searchQuery);
+      if (settings.offlinePosters) {
+        item.posterPath = await PosterCache.ensure(item.id, item.imageUrl);
+      }
+      if (persist) await save();
+      notifyListeners();
+      return;
+    }
 
     // Titre francais : on le traduit en anglais et on retente.
     if (meta == null &&
