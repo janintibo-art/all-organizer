@@ -72,6 +72,11 @@ class AppSettings {
   String tmdbKey = '';
   String themeId = 'encre';
   bool autoWake = true;
+  // Serveur embarque : publie des dossiers du PC sur le reseau local.
+  bool serveurActif = false;
+  int serveurPort = 8321;
+  String serveurJeton = '';
+  List<String> serveurDossiers = [];
   bool scanServersOnStart = false;
   String viewMode = 'grid'; // grid | list | genre
   String sortMode = 'alpha'; // alpha | score | year | episodes | recent
@@ -113,6 +118,10 @@ class AppSettings {
         'tmdbKey': tmdbKey,
         'themeId': themeId,
         'autoWake': autoWake,
+        'serveurActif': serveurActif,
+        'serveurPort': serveurPort,
+        'serveurJeton': serveurJeton,
+        'serveurDossiers': serveurDossiers,
         'scanServersOnStart': scanServersOnStart,
         'viewMode': viewMode,
         'sortMode': sortMode,
@@ -156,6 +165,12 @@ class AppSettings {
     s.tmdbKey = j['tmdbKey'] as String? ?? '';
     s.themeId = j['themeId'] as String? ?? 'encre';
     s.autoWake = j['autoWake'] as bool? ?? true;
+    s.serveurActif = j['serveurActif'] as bool? ?? false;
+    s.serveurPort = j['serveurPort'] as int? ?? 8321;
+    s.serveurJeton = j['serveurJeton'] as String? ?? '';
+    s.serveurDossiers = (j['serveurDossiers'] as List? ?? [])
+        .map((e) => e.toString())
+        .toList();
     s.scanServersOnStart = j['scanServersOnStart'] as bool? ?? false;
     s.viewMode = j['viewMode'] as String? ?? 'grid';
     s.sortMode = j['sortMode'] as String? ?? 'alpha';

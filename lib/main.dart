@@ -7,6 +7,7 @@ import 'screens/splash_screen.dart';
 import 'services/anime_index.dart';
 import 'services/audio_player_service.dart';
 import 'services/library_controller.dart';
+import 'services/media_server.dart';
 import 'services/music_controller.dart';
 import 'services/seed_database.dart';
 
@@ -250,6 +251,20 @@ Future<void> main() async {
     await music.load();
   } catch (e) {
     startupErrors.add('Musique : $e');
+  }
+
+  // Serveur embarque : il doit repondre des l'ouverture, pour qu'un
+  // telephone qui vient de reveiller le PC trouve quelque chose.
+  if (MediaServer.supported && library.settings.serveurActif) {
+    try {
+      await MediaServer.start(
+        dossiers: library.settings.serveurDossiers,
+        port: library.settings.serveurPort,
+        jeton: library.settings.serveurJeton,
+      );
+    } catch (e) {
+      startupErrors.add('Serveur : $e');
+    }
   }
 
   runApp(const AllOrganizerApp());

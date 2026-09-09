@@ -6,6 +6,8 @@ import '../services/audio_player_service.dart';
 import '../services/cover_cache.dart';
 import '../services/music_controller.dart';
 import '../services/ai_service.dart';
+import '../services/autostart.dart';
+import '../services/media_server.dart';
 import '../services/anime_index.dart';
 import '../services/seed_database.dart';
 import '../services/diagnostics.dart';
@@ -80,11 +82,78 @@ class _SettingsScreenState extends State<SettingsScreen> {
   int _indexBytes = 0;
   int _coverBytes = 0;
 
+  String _adresseServeur = '';
+  bool _auSession = false;
+  bool _auDemarrage = false;
+  String? _messageDemarrage;
+
+  late final TextEditingController _serveurPort =
+      TextEditingController(text: library.settings.serveurPort.toString());
+  late final TextEditingController _serveurJeton =
+      TextEditingController(text: library.settings.serveurJeton);
+
   @override
   void initState() {
     super.initState();
     if (_anime) _refreshIndexSize();
     if (_music) _refreshCoverSize();
+    if (_servers) _chargerEtatServeur();
+  }
+
+  Future<void> _chargerEtatServeur() async {
+    final adresse = await MediaServer.localAddress();
+    final session = Autostart.installedForSession;
+    final demarrage = await Autostart.installedAtBoot();
+    if (!mounted) return;
+    setState(() {
+      _adresseServeur = 'http://$adresse:${MediaServer.port}';
+      _auSession = session;
+      _auDemarrage = demarrage;
+    });
+  }
+
+  /// Relance le serveur pour appliquer un port, un jeton ou une liste de
+  /// dossiers qui vient de changer.
+  Future<void> _relancerServeur() async {
+    if (!library.settings.serveurActif) return;
+    await MediaServer.start(
+      dossiers: library.settings.serveurDossiers,
+      port: library.settings.serveurPort,
+      jeton: library.settings.serveurJeton,
+    );
+    await _chargerEtatServeur();
+  }
+
+  Future<void> _basculerServeur(bool actif) async {
+    await library.updateSettings((s) => s.serveurActif = actif);
+    if (actif) {
+      await MediaServer.start(
+        dossiers: library.settings.serveurDossiers,
+        port: library.settings.serveurPort,
+        jeton: library.settings.serveurJeton,
+      );
+    } else {
+      await MediaServer.stop();
+    }
+    await _chargerEtatServeur();
+  }
+
+  Future<void> _ajouterDossierServeur() async {
+    final dossier = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const FolderPickerScreen()),
+    );
+    if (dossier == null) return;
+    final liste = [...library.settings.serveurDossiers];
+    if (liste.contains(dossier)) return;
+    liste.add(dossier);
+    await library.updateSettings((s) => s.serveurDossiers = liste);
+    await _relancerServeur();
+  }
+
+  Future<void> _retirerDossierServeur(String chemin) async {
+    final liste = [...library.settings.serveurDossiers]..remove(chemin);
+    await library.updateSettings((s) => s.serveurDossiers = liste);
+    await _relancerServeur();
   }
 
   Future<void> _refreshCoverSize() async {
@@ -112,6 +181,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _serveurPort.dispose();
+    _serveurJeton.dispose();
     _key.dispose();
     _endpoint.dispose();
     _email.dispose();
@@ -774,6 +845,143 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           size: 18),
                       label: const Text('Vider le cache'),
                     ),
+                  ],
+                ),
+              if (_servers && MediaServer.supported)
+                _card(
+                  icon: Icons.dns_outlined,
+                  title: 'Serveur sur ce PC',
+                  children: [
+                    Text(
+                      'Publie des dossiers de cet ordinateur sur le réseau '
+                      'local. Le téléphone les parcourt et lit les fichiers '
+                      'sans rien copier.',
+                      style: TextStyle(
+                          color: Palette.muted, fontSize: 12, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      MediaServer.running
+                          ? 'En écoute sur $_adresseServeur — ${MediaServer.racines.length} dossier(s) publié(s).'
+                          : (MediaServer.lastError ?? 'Arrêté.'),
+                      style: TextStyle(
+                          color: MediaServer.running
+                              ? Palette.kin
+                              : Palette.muted,
+                          fontSize: 12,
+                          height: 1.4),
+                    ),
+                    _switch(
+                      value: s.serveurActif,
+                      onChanged: (v) => _basculerServeur(v),
+                      title: 'Servir les médias de ce PC',
+                      subtitle:
+                          'Le serveur démarre en même temps que l\'application.',
+                    ),
+                    if (s.serveurDossiers.isEmpty)
+                      Text('Aucun dossier publié pour l\'instant.',
+                          style:
+                              TextStyle(color: Palette.muted, fontSize: 13)),
+                    for (final chemin in s.serveurDossiers)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading:
+                            Icon(Icons.folder_outlined, color: Palette.kin),
+                        title: Text(chemin,
+                            style: const TextStyle(fontSize: 12.5)),
+                        trailing: IconButton(
+                          icon: Icon(Icons.close,
+                              color: Palette.muted, size: 18),
+                          onPressed: () => _retirerDossierServeur(chemin),
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    OutlinedButton.icon(
+                      onPressed: _ajouterDossierServeur,
+                      icon: const Icon(Icons.create_new_folder_outlined,
+                          size: 18),
+                      label: const Text('Publier un dossier'),
+                    ),
+                    const SizedBox(height: 12),
+                    _field(
+                      controller: _serveurPort,
+                      label: 'Port',
+                      hint: '8321 par défaut',
+                      onSubmit: (v) {
+                        final n = int.tryParse(v.trim());
+                        if (n == null || n < 1024 || n > 65535) return;
+                        library.updateSettings((s) => s.serveurPort = n);
+                        _relancerServeur();
+                      },
+                    ),
+                    _field(
+                      controller: _serveurJeton,
+                      label: 'Jeton',
+                      hint: 'Laisse vide pour ouvrir à tout le réseau local',
+                      obscure: true,
+                      onSubmit: (v) {
+                        library.updateSettings((s) => s.serveurJeton = v.trim());
+                        _relancerServeur();
+                      },
+                    ),
+                  ],
+                ),
+              if (_servers && Autostart.supported)
+                _card(
+                  icon: Icons.restart_alt,
+                  title: 'Démarrage automatique',
+                  children: [
+                    Text(
+                      'Le dossier Démarrage ne s\'exécute qu\'une fois la '
+                      'session ouverte : au réveil depuis la veille c\'est '
+                      'suffisant, après un arrêt complet non. La tâche '
+                      'planifiée, elle, part avec Windows même si personne '
+                      'n\'est connecté, mais demande les droits '
+                      'administrateur.',
+                      style: TextStyle(
+                          color: Palette.muted, fontSize: 12, height: 1.4),
+                    ),
+                    _switch(
+                      value: _auSession,
+                      onChanged: (v) async {
+                        if (v) {
+                          await Autostart.enableForSession();
+                        } else {
+                          await Autostart.disableForSession();
+                        }
+                        if (!mounted) return;
+                        setState(() {
+                          _auSession = Autostart.installedForSession;
+                          _messageDemarrage = Autostart.lastError;
+                        });
+                      },
+                      title: 'À l\'ouverture de session',
+                      subtitle: 'Sans droits particuliers.',
+                    ),
+                    _switch(
+                      value: _auDemarrage,
+                      onChanged: (v) async {
+                        if (v) {
+                          await Autostart.enableAtBoot();
+                        } else {
+                          await Autostart.disableAtBoot();
+                        }
+                        final pose = await Autostart.installedAtBoot();
+                        if (!mounted) return;
+                        setState(() {
+                          _auDemarrage = pose;
+                          _messageDemarrage = Autostart.lastError;
+                        });
+                      },
+                      title: 'Au démarrage de Windows',
+                      subtitle:
+                          'Nécessaire pour un réveil depuis le téléphone après extinction.',
+                    ),
+                    if (_messageDemarrage != null)
+                      Text(_messageDemarrage!,
+                          style: TextStyle(
+                              color: Palette.shu, fontSize: 12, height: 1.4)),
                   ],
                 ),
               if (_servers)
