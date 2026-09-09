@@ -713,9 +713,6 @@ class _DetailScreenState extends State<DetailScreen> {
     final missing = !item.remote && !library.episodeExists(e);
     final seen = item.isWatched(e);
     final serverId = item.serverId;
-    final copie = serverId != null && downloads.has(serverId, e.path);
-    final avance =
-        serverId == null ? null : downloads.progressOf(serverId, e.path);
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -754,43 +751,50 @@ class _DetailScreenState extends State<DetailScreen> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11, color: Palette.muted)),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (serverId != null)
-            if (avance != null)
-              SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  value: avance > 0 ? avance : null,
-                  strokeWidth: 2,
-                  color: Palette.kin,
-                ),
-              )
-            else
-              IconButton(
-                tooltip: copie
-                    ? 'Supprimer la copie'
-                    : 'Télécharger sur l\'appareil',
-                icon: Icon(
-                    copie
-                        ? Icons.download_done
-                        : Icons.download_for_offline_outlined,
-                    size: 20,
-                    color: copie ? Palette.kin : Palette.muted),
-                onPressed: () async {
-                  if (copie) {
-                    await downloads.remove(serverId, e.path);
-                  } else {
-                    final ok = await downloads.episode(item, e);
-                    if (!ok && mounted) _dire(downloads.lastError);
-                  }
-                  if (mounted) setState(() {});
-                },
-              ),
-          Icon(Icons.play_circle_outline, color: Palette.muted),
-        ],
+      trailing: ListenableBuilder(
+        listenable: downloads,
+        builder: (context, _) {
+          final copie = serverId != null && downloads.has(serverId, e.path);
+          final avance =
+              serverId == null ? null : downloads.progressOf(serverId, e.path);
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (serverId != null)
+                if (avance != null)
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      value: avance > 0 ? avance : null,
+                      strokeWidth: 2,
+                      color: Palette.kin,
+                    ),
+                  )
+                else
+                  IconButton(
+                    tooltip: copie
+                        ? 'Supprimer la copie'
+                        : 'Télécharger sur l\'appareil',
+                    icon: Icon(
+                        copie
+                            ? Icons.download_done
+                            : Icons.download_for_offline_outlined,
+                        size: 20,
+                        color: copie ? Palette.kin : Palette.muted),
+                    onPressed: () async {
+                      if (copie) {
+                        await downloads.remove(serverId, e.path);
+                      } else {
+                        final ok = await downloads.episode(item, e);
+                        if (!ok && mounted) _dire(downloads.lastError);
+                      }
+                    },
+                  ),
+              Icon(Icons.play_circle_outline, color: Palette.muted),
+            ],
+          );
+        },
       ),
       onTap: missing ? null : () => _play(index),
     );
