@@ -579,7 +579,9 @@ class _DetailScreenState extends State<DetailScreen> {
   Widget _resumeButton() {
     if (item.episodes.isEmpty) return const SizedBox.shrink();
     final index = item.resumeIndex;
-    final at = item.resumePosition;
+    final at = library.settings.resumePlayback
+        ? item.resumePosition
+        : Duration.zero;
     final label = item.finished
         ? 'Revoir depuis le début'
         : (at > Duration.zero

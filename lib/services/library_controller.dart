@@ -40,6 +40,10 @@ class AppSettings {
 
   // Lecteur
   bool autoNext = true;
+  bool resumePlayback = true;
+  /// Pourcentage au-dela duquel un episode passe en « vu ». Le generique de
+  /// fin ne merite pas d'etre subi.
+  int finishedThreshold = 92;
   int skipIntroSeconds = 85;
   int seekStepSeconds = 10;
   double subtitleSize = 32;
@@ -83,6 +87,8 @@ class AppSettings {
         'scanOnStart': scanOnStart,
         'offlinePosters': offlinePosters,
         'autoNext': autoNext,
+        'resumePlayback': resumePlayback,
+        'finishedThreshold': finishedThreshold,
         'skipIntroSeconds': skipIntroSeconds,
         'seekStepSeconds': seekStepSeconds,
         'subtitleSize': subtitleSize,
@@ -124,6 +130,8 @@ class AppSettings {
     s.scanOnStart = j['scanOnStart'] as bool? ?? true;
     s.offlinePosters = j['offlinePosters'] as bool? ?? true;
     s.autoNext = j['autoNext'] as bool? ?? true;
+    s.resumePlayback = j['resumePlayback'] as bool? ?? true;
+    s.finishedThreshold = (j['finishedThreshold'] as int? ?? 92).clamp(80, 99);
     s.skipIntroSeconds = j['skipIntroSeconds'] as int? ?? 85;
     s.seekStepSeconds = j['seekStepSeconds'] as int? ?? 10;
     s.subtitleSize = (j['subtitleSize'] as num?)?.toDouble() ?? 32;
@@ -663,8 +671,8 @@ class LibraryController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Enregistre la position de lecture. Au-dela de 92 % l'episode est
-  /// considere comme vu : le generique de fin ne merite pas d'etre subi.
+  /// Enregistre la position de lecture. Au-dela du seuil regle dans
+  /// « Lecteur », l'episode est considere comme vu.
   Future<void> savePlayback(
     MediaItem item,
     Episode episode,
@@ -675,8 +683,9 @@ class LibraryController extends ChangeNotifier {
     item.lastPositionMs = position.inMilliseconds;
     item.lastPlayedAtMs = DateTime.now().millisecondsSinceEpoch;
 
+    final seuil = settings.finishedThreshold / 100;
     if (duration.inSeconds > 0 &&
-        position.inMilliseconds / duration.inMilliseconds > 0.92 &&
+        position.inMilliseconds / duration.inMilliseconds > seuil &&
         !item.watchedPaths.contains(episode.path)) {
       item.watchedPaths.add(episode.path);
       item.lastPositionMs = 0;

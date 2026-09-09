@@ -462,6 +462,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     subtitle:
                         'Sinon la lecture s\'arrête à la fin de chaque épisode.',
                   ),
+                  _switch(
+                    value: s.resumePlayback,
+                    onChanged: (v) =>
+                        library.updateSettings((s) => s.resumePlayback = v),
+                    title: 'Reprendre où je m\'étais arrêté',
+                    subtitle:
+                        'La position est enregistrée pendant la lecture. Sinon chaque épisode repart du début.',
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Marquer comme vu au-delà de ${s.finishedThreshold} %',
+                    style: TextStyle(color: Palette.text, fontSize: 13.5),
+                  ),
+                  Slider(
+                    value: s.finishedThreshold.toDouble(),
+                    min: 80,
+                    max: 99,
+                    divisions: 19,
+                    activeColor: Palette.shu,
+                    inactiveColor: Palette.raised,
+                    label: '${s.finishedThreshold} %',
+                    onChanged: (v) => library.updateSettings(
+                        (s) => s.finishedThreshold = v.round()),
+                  ),
+                  Text(
+                    'Au-delà de ce seuil, l\'épisode passe en « vu » et la '
+                    'série avance au suivant. Le générique de fin ne compte pas.',
+                    style: TextStyle(
+                        color: Palette.muted, fontSize: 11.5, height: 1.4),
+                  ),
+                  const SizedBox(height: 8),
                   _dropdown<int>(
                     label: 'Bouton « passer l\'intro »',
                     value: const [60, 85, 90, 120].contains(s.skipIntroSeconds)
