@@ -78,6 +78,9 @@ class _DetailScreenState extends State<DetailScreen> {
     final results = await MetadataService.searchMany(
       query,
       source: library.settings.metaSource,
+      tmdbKey: library.settings.tmdbKey,
+      anime: item.kind == MediaKind.anime,
+      animeSource: library.settings.animeSource,
     );
     if (!mounted) return;
     setState(() => _working = false);

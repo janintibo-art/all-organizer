@@ -165,7 +165,13 @@ class _HomeScreenState extends State<HomeScreen> {
               IconButton(
                 tooltip: 'Réglages',
                 onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SettingsScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => SettingsScreen(
+                      section: widget.kind == MediaKind.anime
+                          ? SettingsSection.anime
+                          : SettingsSection.video,
+                    ),
+                  ),
                 ),
                 icon: const Icon(Icons.tune),
               ),

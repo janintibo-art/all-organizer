@@ -12,14 +12,30 @@ import '../services/poster_cache.dart';
 import 'bulk_fix_screen.dart';
 import 'folder_picker_screen.dart';
 
+/// Onglet depuis lequel les reglages ont ete ouverts. Chaque onglet a ses
+/// particularites : les sources japonaises n'ont pas de sens pour un film,
+/// le lecteur video n'en a pas pour la musique.
+enum SettingsSection { anime, video, music, servers }
+
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({super.key});
+  const SettingsScreen({super.key, this.section = SettingsSection.video});
+
+  /// Onglet d'origine. Video par defaut : c'est le cas le plus courant.
+  final SettingsSection section;
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool get _anime => widget.section == SettingsSection.anime;
+  bool get _music => widget.section == SettingsSection.music;
+  bool get _servers => widget.section == SettingsSection.servers;
+
+  /// Vrai pour les onglets qui rangent des videos : animes, films, series
+  /// et jeunesse. Ce sont les seuls a avoir des fiches et un lecteur video.
+  bool get _video => _anime || widget.section == SettingsSection.video;
+
   late final TextEditingController _key =
       TextEditingController(text: library.settings.apiKey);
   late final TextEditingController _endpoint =
@@ -127,7 +143,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ],
                   ),
                 ),
-              _card(
+              if (!_servers)
+                _card(
                 icon: Icons.folder_copy_outlined,
                 title: 'Bibliothèque',
                 children: [
@@ -161,7 +178,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
-              _card(
+              if (!_servers)
+                _card(
                 icon: Icons.storage,
                 title: 'Ta mémoire',
                 children: [
@@ -181,25 +199,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ],
               ),
-              _card(
+              if (_video)
+                _card(
                 icon: Icons.badge_outlined,
                 title: 'Métadonnées',
                 children: [
-                  _dropdown<String>(
-                    label: 'Source',
-                    value: s.metaSource,
-                    items: const {
-                      'auto': 'TMDB, puis TVmaze pour les séries',
-                      'tmdb': 'TMDB seulement',
-                      'tvmaze': 'TVmaze seulement (séries)',
-                    },
-                    onChanged: (v) =>
-                        library.updateSettings((s) => s.metaSource = v),
-                  ),
+                  if (_anime)
+                    _dropdown<String>(
+                      label: 'Source',
+                      value: s.animeSource,
+                      items: const {
+                        'auto': 'Automatique — les quatre sources en cascade',
+                        'anilist': 'AniList seulement',
+                        'jikan': 'MyAnimeList seulement',
+                        'kitsu': 'Kitsu seulement',
+                        'animethemes': 'AnimeThemes seulement',
+                        'tmdb': 'TMDB seulement (clé requise)',
+                      },
+                      onChanged: (v) =>
+                          library.updateSettings((s) => s.animeSource = v),
+                    )
+                  else
+                    _dropdown<String>(
+                      label: 'Source',
+                      value: s.metaSource,
+                      items: const {
+                        'auto': 'TMDB, puis TVmaze pour les séries',
+                        'tmdb': 'TMDB seulement',
+                        'tvmaze': 'TVmaze seulement (séries)',
+                      },
+                      onChanged: (v) =>
+                          library.updateSettings((s) => s.metaSource = v),
+                    ),
                   _field(
                     controller: _tmdbKey,
-                    label: 'Clé TMDB',
-                    hint: 'Indispensable : films, séries et textes en français',
+                    label: _anime ? 'Clé TMDB (facultative)' : 'Clé TMDB',
+                    hint: _anime
+                        ? 'Sert de dernier recours et donne des synopsis en français'
+                        : 'Indispensable : films, séries et textes en français',
                     obscure: true,
                     onSubmit: (v) => library.updateSettings((s) => s.tmdbKey = v),
                   ),
@@ -257,7 +294,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
-              _card(
+              if (_video)
+                _card(
                 icon: Icons.translate,
                 title: 'Traduction',
                 children: [
@@ -327,7 +365,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ],
               ),
-              _card(
+              if (_video)
+                _card(
                 icon: Icons.play_circle_outline,
                 title: 'Lecteur',
                 children: [
@@ -430,7 +469,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                 ],
               ),
-              _card(
+              if (!_servers)
+                _card(
                 icon: Icons.auto_awesome,
                 title: 'Assistant IA',
                 children: [
@@ -560,7 +600,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                 ],
               ),
-              _card(
+              if (!_servers)
+                _card(
                 icon: Icons.cloud_off_outlined,
                 title: 'Hors connexion',
                 children: [
@@ -568,7 +609,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     value: s.offlinePosters,
                     onChanged: (v) =>
                         library.updateSettings((s) => s.offlinePosters = v),
-                    title: 'Enregistrer les affiches sur l\'appareil',
+                    title: _music
+                        ? 'Enregistrer les pochettes sur l\'appareil'
+                        : 'Enregistrer les affiches sur l\'appareil',
                     subtitle:
                         'La bibliothèque reste illustrée sans connexion.',
                   ),
@@ -580,13 +623,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       OutlinedButton.icon(
                         onPressed: library.busy ? null : _cachePosters,
                         icon: const Icon(Icons.download_outlined, size: 18),
-                        label: const Text('Télécharger les affiches'),
+                        label: Text(_music
+                            ? 'Télécharger les pochettes'
+                            : 'Télécharger les affiches'),
                       ),
                       OutlinedButton.icon(
                         onPressed: _clearPosters,
                         icon: const Icon(Icons.cleaning_services_outlined,
                             size: 18),
-                        label: const Text('Vider le cache d\'affiches'),
+                        label: Text(_music
+                            ? 'Vider le cache de pochettes'
+                            : 'Vider le cache d\'affiches'),
                       ),
                     ],
                   ),

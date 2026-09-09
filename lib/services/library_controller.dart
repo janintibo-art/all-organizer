@@ -57,8 +57,10 @@ class AppSettings {
   String aiModel = 'llama-3.3-70b-versatile';
   String aiEndpoint = '';
   bool aiWebSearch = true;
-  // auto | tmdb | tvmaze
+  // auto | tmdb | tvmaze — films, séries et jeunesse
   String metaSource = 'auto';
+  // auto | anilist | jikan | kitsu | animethemes | tmdb — animes japonais
+  String animeSource = 'auto';
   String tmdbKey = '';
   String themeId = 'encre';
   bool autoWake = true;
@@ -95,6 +97,7 @@ class AppSettings {
         'aiEndpoint': aiEndpoint,
         'aiWebSearch': aiWebSearch,
         'metaSource': metaSource,
+        'animeSource': animeSource,
         'tmdbKey': tmdbKey,
         'themeId': themeId,
         'autoWake': autoWake,
@@ -133,6 +136,7 @@ class AppSettings {
     s.aiEndpoint = j['aiEndpoint'] as String? ?? '';
     s.aiWebSearch = j['aiWebSearch'] as bool? ?? true;
     s.metaSource = j['metaSource'] as String? ?? 'auto';
+    s.animeSource = j['animeSource'] as String? ?? 'auto';
     s.tmdbKey = j['tmdbKey'] as String? ?? '';
     s.themeId = j['themeId'] as String? ?? 'encre';
     s.autoWake = j['autoWake'] as bool? ?? true;
@@ -423,6 +427,7 @@ class LibraryController extends ChangeNotifier {
       moviesOnly: item.kind == MediaKind.movie,
       seriesOnly: item.kind == MediaKind.series,
       anime: item.kind == MediaKind.anime,
+      animeSource: settings.animeSource,
     );
 
     // 3. Rien en ligne mais la base locale connait la serie : on l'applique
@@ -444,7 +449,9 @@ class LibraryController extends ChangeNotifier {
       if (english != null && english.trim().isNotEmpty) {
         meta = await MetadataService.smartSearch(english,
             source: settings.metaSource,
-            episodeCount: item.episodes.where((e) => !e.bonus).length);
+            episodeCount: item.episodes.where((e) => !e.bonus).length,
+            anime: item.kind == MediaKind.anime,
+            animeSource: settings.animeSource);
       }
     }
 
@@ -464,6 +471,8 @@ class LibraryController extends ChangeNotifier {
           source: settings.metaSource,
           episodeCount: count,
           tmdbKey: settings.tmdbKey,
+          anime: item.kind == MediaKind.anime,
+          animeSource: settings.animeSource,
         );
         if (meta == null && ai.english.isNotEmpty) {
           meta = await MetadataService.smartSearch(
@@ -471,6 +480,8 @@ class LibraryController extends ChangeNotifier {
             source: settings.metaSource,
             episodeCount: count,
             tmdbKey: settings.tmdbKey,
+            anime: item.kind == MediaKind.anime,
+            animeSource: settings.animeSource,
           );
         }
       }

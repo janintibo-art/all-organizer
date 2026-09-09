@@ -239,7 +239,10 @@ class _TracksScreenState extends State<TracksScreen> {
         IconButton(
           tooltip: 'Réglages',
           onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            MaterialPageRoute(
+                builder: (_) =>
+                    const SettingsScreen(section: SettingsSection.music),
+              ),
           ),
           icon: const Icon(Icons.tune),
         ),

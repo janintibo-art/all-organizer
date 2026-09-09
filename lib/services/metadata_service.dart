@@ -2,6 +2,7 @@ import 'dart:math';
 
 import '../models/media_meta.dart';
 import 'anilist_api.dart';
+import 'animethemes_api.dart';
 import 'jikan_api.dart';
 import 'kitsu_api.dart';
 import 'tmdb_api.dart';
@@ -142,18 +143,35 @@ class MetadataService {
     bool moviesOnly = false,
     bool seriesOnly = false,
     bool anime = false,
+    String animeSource = 'auto',
   }) async {
     // Un anime ne se cherche pas chez TMDB : AniList, MyAnimeList et Kitsu
     // connaissent les titres romaji, les saisons et les OAV, ce que les
     // bases generalistes rendent mal.
     if (anime) {
-      final principal = await AniListApi.searchMany(title, limit: limit);
-      if (principal.isNotEmpty) return principal;
-      final secours = await JikanApi.searchMany(title, limit: limit);
-      if (secours.isNotEmpty) return secours;
-      final troisieme = await KitsuApi.search(title, limit: limit);
-      if (troisieme.isNotEmpty) return troisieme;
-      // Rien du cote japonais : TMDB reste un dernier recours.
+      switch (animeSource) {
+        case 'anilist':
+          return AniListApi.searchMany(title, limit: limit);
+        case 'jikan':
+          return JikanApi.searchMany(title, limit: limit);
+        case 'kitsu':
+          return KitsuApi.search(title, limit: limit);
+        case 'animethemes':
+          return AnimeThemesApi.search(title, limit: limit);
+        case 'tmdb':
+          return TmdbApi.search(title, tmdbKey,
+              limit: limit, moviesOnly: moviesOnly, seriesOnly: seriesOnly);
+        default:
+          final principal = await AniListApi.searchMany(title, limit: limit);
+          if (principal.isNotEmpty) return principal;
+          final secours = await JikanApi.searchMany(title, limit: limit);
+          if (secours.isNotEmpty) return secours;
+          final troisieme = await KitsuApi.search(title, limit: limit);
+          if (troisieme.isNotEmpty) return troisieme;
+          final quatrieme = await AnimeThemesApi.search(title, limit: limit);
+          if (quatrieme.isNotEmpty) return quatrieme;
+        // Rien du cote japonais : TMDB reste un dernier recours.
+      }
     }
 
     switch (source) {
@@ -202,6 +220,7 @@ class MetadataService {
     bool moviesOnly = false,
     bool seriesOnly = false,
     bool anime = false,
+    String animeSource = 'auto',
   }) async {
     MediaMeta? best;
     var bestScore = 0.0;
@@ -216,6 +235,7 @@ class MetadataService {
         moviesOnly: moviesOnly,
         seriesOnly: seriesOnly,
         anime: anime,
+        animeSource: animeSource,
       );
 
       for (final candidate in results) {
