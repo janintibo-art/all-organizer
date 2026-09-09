@@ -417,6 +417,19 @@ class MusicController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Ecrit une sauvegarde : listes de lecture, favoris et ecoutes. Les
+  /// fichiers audio ne sont pas copies.
+  Future<String> exportLibrary(String folder) async {
+    String deux(int n) => n.toString().padLeft(2, '0');
+    final now = DateTime.now();
+    final stamp = '${now.year}${deux(now.month)}${deux(now.day)}'
+        '-${deux(now.hour)}${deux(now.minute)}';
+    final file =
+        File(p.join(folder, 'music-organizer-sauvegarde-$stamp.json'));
+    await file.writeAsString(jsonEncode(snapshot()), flush: true);
+    return file.path;
+  }
+
   /// Restaure une sauvegarde en fusionnant : les listes de lecture et les
   /// écoutes reviennent, la liste des fichiers reste celle du disque.
   /// Renvoie le nombre de morceaux repris, ou -1 si le fichier est illisible.

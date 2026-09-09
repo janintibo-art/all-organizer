@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../services/library_controller.dart';
 import '../services/audio_player_service.dart';
+import '../services/cover_cache.dart';
 import '../services/music_controller.dart';
 import '../services/ai_service.dart';
 import '../services/anime_index.dart';
@@ -77,11 +78,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
   double _indexProgress = 0;
   String? _indexMessage;
   int _indexBytes = 0;
+  int _coverBytes = 0;
 
   @override
   void initState() {
     super.initState();
     if (_anime) _refreshIndexSize();
+    if (_music) _refreshCoverSize();
+  }
+
+  Future<void> _refreshCoverSize() async {
+    final bytes = await CoverCache.sizeInBytes();
+    if (mounted) setState(() => _coverBytes = bytes);
+  }
+
+  Future<void> _clearCovers() async {
+    final n = await CoverCache.clear();
+    for (final t in music.tracks) {
+      t.coverPath = null;
+    }
+    await music.save();
+    await _refreshCoverSize();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$n pochette(s) supprimée(s).')),
+    );
   }
 
   Future<void> _refreshIndexSize() async {
@@ -166,37 +187,67 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 icon: Icons.folder_copy_outlined,
                 title: 'Bibliothèque',
                 children: [
-                  if (library.folders.isEmpty)
-                    Text('Aucun dossier pour l\'instant.',
-                        style: TextStyle(color: Palette.muted, fontSize: 13)),
-                  for (final f in library.folders)
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      leading:
-                          Icon(Icons.folder_outlined, color: Palette.kin),
-                      title: Text(f.path,
-                          style: const TextStyle(fontSize: 12.5)),
-                      subtitle: Text(f.kindLabel,
-                          style: TextStyle(
-                              color: Palette.kin, fontSize: 11)),
-                      trailing: IconButton(
-                        icon: Icon(Icons.close,
-                            color: Palette.muted, size: 18),
-                        onPressed: () => _confirmRemoveFolder(f.path),
+                  if (_music) ...[
+                    if (music.folders.isEmpty)
+                      Text('Aucun dossier pour l\'instant.',
+                          style:
+                              TextStyle(color: Palette.muted, fontSize: 13)),
+                    for (final chemin in music.folders)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading:
+                            Icon(Icons.folder_outlined, color: Palette.kin),
+                        title: Text(chemin,
+                            style: const TextStyle(fontSize: 12.5)),
+                        trailing: IconButton(
+                          icon: Icon(Icons.close,
+                              color: Palette.muted, size: 18),
+                          onPressed: () => _confirmRemoveMusicFolder(chemin),
+                        ),
                       ),
+                    _switch(
+                      value: music.settings.scanOnStart,
+                      onChanged: (v) =>
+                          music.updateSettings((m) => m.scanOnStart = v),
+                      title: 'Scanner à chaque ouverture',
+                      subtitle:
+                          'Détecte les nouveaux morceaux. Les pochettes déjà extraites sont conservées.',
                     ),
-                  _switch(
-                    value: s.scanOnStart,
-                    onChanged: (v) =>
-                        library.updateSettings((s) => s.scanOnStart = v),
-                    title: 'Scanner à chaque ouverture',
-                    subtitle:
-                        'Détecte les nouveaux items. Les fiches déjà trouvées sont conservées.',
-                  ),
+                  ] else ...[
+                    if (library.folders.isEmpty)
+                      Text('Aucun dossier pour l\'instant.',
+                          style:
+                              TextStyle(color: Palette.muted, fontSize: 13)),
+                    for (final f in library.folders)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        leading:
+                            Icon(Icons.folder_outlined, color: Palette.kin),
+                        title: Text(f.path,
+                            style: const TextStyle(fontSize: 12.5)),
+                        subtitle: Text(f.kindLabel,
+                            style:
+                                TextStyle(color: Palette.kin, fontSize: 11)),
+                        trailing: IconButton(
+                          icon: Icon(Icons.close,
+                              color: Palette.muted, size: 18),
+                          onPressed: () => _confirmRemoveFolder(f.path),
+                        ),
+                      ),
+                    _switch(
+                      value: s.scanOnStart,
+                      onChanged: (v) =>
+                          library.updateSettings((s) => s.scanOnStart = v),
+                      title: 'Scanner à chaque ouverture',
+                      subtitle:
+                          'Détecte les nouveaux items. Les fiches déjà trouvées sont conservées.',
+                    ),
+                  ],
                 ],
               ),
-              if (!_servers)
+              if (!_servers && !_music)
                 _card(
                 icon: Icons.storage,
                 title: _anime ? 'Base locale' : 'Ta mémoire',
@@ -633,7 +684,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ),
                 ],
               ),
-              if (!_servers)
+              if (!_servers && !_music)
                 _card(
                 icon: Icons.cloud_off_outlined,
                 title: 'Hors connexion',
@@ -642,9 +693,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     value: s.offlinePosters,
                     onChanged: (v) =>
                         library.updateSettings((s) => s.offlinePosters = v),
-                    title: _music
-                        ? 'Enregistrer les pochettes sur l\'appareil'
-                        : 'Enregistrer les affiches sur l\'appareil',
+                    title: 'Enregistrer les affiches sur l\'appareil',
                     subtitle:
                         'La bibliothèque reste illustrée sans connexion.',
                   ),
@@ -656,22 +705,76 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       OutlinedButton.icon(
                         onPressed: library.busy ? null : _cachePosters,
                         icon: const Icon(Icons.download_outlined, size: 18),
-                        label: Text(_music
-                            ? 'Télécharger les pochettes'
-                            : 'Télécharger les affiches'),
+                        label: const Text('Télécharger les affiches'),
                       ),
                       OutlinedButton.icon(
                         onPressed: _clearPosters,
                         icon: const Icon(Icons.cleaning_services_outlined,
                             size: 18),
-                        label: Text(_music
-                            ? 'Vider le cache de pochettes'
-                            : 'Vider le cache d\'affiches'),
+                        label: const Text('Vider le cache d\'affiches'),
                       ),
                     ],
                   ),
                 ],
               ),
+              if (_music)
+                _card(
+                  icon: Icons.image_outlined,
+                  title: 'Pochettes',
+                  children: [
+                    Text(
+                      'Les pochettes intégrées aux fichiers sont extraites et '
+                      'rangées à part, une par album. Une image posée dans le '
+                      'dossier — cover, folder, front — sert de secours.',
+                      style: TextStyle(
+                          color: Palette.muted, fontSize: 12, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      _coverBytes == 0
+                          ? 'Cache vide.'
+                          : '${(_coverBytes / 1000000).toStringAsFixed(1)} Mo de pochettes.',
+                      style: TextStyle(color: Palette.kin, fontSize: 12),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _clearCovers,
+                      icon: const Icon(Icons.cleaning_services_outlined,
+                          size: 18),
+                      label: const Text('Vider le cache'),
+                    ),
+                  ],
+                ),
+              if (_servers)
+                _card(
+                  icon: Icons.power_settings_new,
+                  title: 'Réveil du PC',
+                  children: [
+                    Text(
+                      'Quand le serveur ne répond pas, l\'adresse de réveil du '
+                      'serveur actif est appelée, puis l\'application attend '
+                      'que la machine démarre.',
+                      style: TextStyle(
+                          color: Palette.muted, fontSize: 12, height: 1.4),
+                    ),
+                    _switch(
+                      value: s.autoWake,
+                      onChanged: (v) =>
+                          library.updateSettings((s) => s.autoWake = v),
+                      title: 'Réveil automatique',
+                      subtitle:
+                          'Sinon, le bouton reste disponible dans l\'onglet Serveurs.',
+                    ),
+                    _switch(
+                      value: s.scanServersOnStart,
+                      onChanged: (v) => library
+                          .updateSettings((s) => s.scanServersOnStart = v),
+                      title: 'Scanner les serveurs à l\'ouverture',
+                      subtitle:
+                          'Plus long au démarrage, et réveille le PC si besoin.',
+                    ),
+                  ],
+                ),
               _card(
                 icon: Icons.network_check,
                 title: 'Diagnostic',
@@ -715,8 +818,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 title: 'Sauvegarde',
                 children: [
                   Text(
-                    'Un fichier unique contient les fiches, les favoris et la progression. '
-                    'Les vidéos ne sont pas copiées.',
+                    _music
+                        ? 'Un fichier unique contient tes listes de lecture, tes '
+                            'favoris et tes écoutes. Les fichiers audio ne sont '
+                            'pas copiés.'
+                        : 'Un fichier unique contient les fiches, les favoris et la progression. '
+                            'Les vidéos ne sont pas copiées.',
                     style: TextStyle(
                         color: Palette.muted, fontSize: 12, height: 1.4),
                   ),
@@ -836,7 +943,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Ces actions effacent des données de l\'application. Tes fichiers vidéo ne sont jamais touchés.',
+            _music
+                ? 'Efface la bibliothèque, les listes de lecture et les '
+                    'pochettes. Tes fichiers audio ne sont jamais touchés.'
+                : 'Ces actions effacent des données de l\'application. Tes fichiers vidéo ne sont jamais touchés.',
             style: TextStyle(color: Palette.muted, fontSize: 12, height: 1.4),
           ),
           const SizedBox(height: 12),
@@ -845,7 +955,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               foregroundColor: Palette.shu,
               side: BorderSide(color: Palette.shu),
             ),
-            onPressed: library.busy ? null : _confirmClear,
+            onPressed: (_music ? music.busy : library.busy)
+                ? null
+                : _confirmClear,
             icon: const Icon(Icons.delete_sweep_outlined, size: 18),
             label: const Text('Vider la bibliothèque'),
           ),
@@ -1086,7 +1198,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _diagBusy = true;
       _diagnostic = [];
     });
-    final lines = await Diagnostics.run(library.settings.tmdbKey);
+    final lines =
+        await Diagnostics.run(library.settings.tmdbKey, anime: _anime);
     lines.addAll(Diagnostics.lastErrors());
     if (!mounted) return;
     setState(() {
@@ -1160,7 +1273,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
     if (folder == null) return;
     try {
-      final path = await library.exportLibrary(folder);
+      final path = _music
+          ? await music.exportLibrary(folder)
+          : await library.exportLibrary(folder);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Sauvegarde écrite : $path')),
@@ -1181,6 +1296,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
     );
     if (file == null || !mounted) return;
+
+    // La sauvegarde musicale ne connait que la fusion : la liste des
+    // fichiers reste toujours celle du disque.
+    if (_music) {
+      final count = await music.importFrom(file);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(count < 0
+              ? 'Fichier de sauvegarde illisible.'
+              : '$count morceau(x) restauré(s).'),
+        ),
+      );
+      return;
+    }
 
     final merge = await showDialog<bool>(
       context: context,
@@ -1250,14 +1380,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (ok == true) await library.removeFolder(folder);
   }
 
+  Future<void> _confirmRemoveMusicFolder(String folder) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: Palette.surface,
+        title: const Text('Retirer ce dossier ?'),
+        content: Text(
+          'Les morceaux de $folder disparaîtront de la bibliothèque. '
+          'Aucun fichier audio n\'est supprimé du disque.',
+          style: const TextStyle(height: 1.4),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Palette.shu),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Retirer'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await music.removeFolder(folder);
+  }
+
   Future<void> _confirmClear() async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Palette.surface,
         title: const Text('Vider la bibliothèque ?'),
-        content: const Text(
-            'Les fiches, les favoris et la progression seront effacés. Tes fichiers vidéo ne sont pas touchés.'),
+        content: Text(_music
+            ? 'Les morceaux, les listes de lecture et les pochettes seront effacés. Tes fichiers audio ne sont pas touchés.'
+            : 'Les fiches, les favoris et la progression seront effacés. Tes fichiers vidéo ne sont pas touchés.'),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -1270,7 +1427,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
-    if (ok == true) await library.clearLibrary();
+    if (ok == true) {
+      await (_music ? music.clearLibrary() : library.clearLibrary());
+    }
   }
 
   Widget _switch({
