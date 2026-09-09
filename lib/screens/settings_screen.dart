@@ -11,6 +11,7 @@ import '../services/media_server.dart';
 import '../services/anime_index.dart';
 import '../services/seed_database.dart';
 import '../services/diagnostics.dart';
+import '../services/downloads.dart';
 import '../services/links.dart';
 import '../services/tmdb_api.dart';
 import '../services/poster_cache.dart';
@@ -81,6 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _indexMessage;
   int _indexBytes = 0;
   int _coverBytes = 0;
+  int _downloadBytes = 0;
 
   String _adresseServeur = '';
   bool _auSession = false;
@@ -97,6 +99,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     if (_anime) _refreshIndexSize();
     if (_music) _refreshCoverSize();
+    if (!_servers) _refreshDownloadSize();
     if (_servers) _chargerEtatServeur();
   }
 
@@ -154,6 +157,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final liste = [...library.settings.serveurDossiers]..remove(chemin);
     await library.updateSettings((s) => s.serveurDossiers = liste);
     await _relancerServeur();
+  }
+
+  Future<void> _refreshDownloadSize() async {
+    final bytes = await downloads.sizeInBytes();
+    if (mounted) setState(() => _downloadBytes = bytes);
+  }
+
+  Future<void> _choisirDossierTelechargements() async {
+    final dossier = await Navigator.of(context).push<String>(
+      MaterialPageRoute(builder: (_) => const FolderPickerScreen()),
+    );
+    if (dossier == null) return;
+    await library.updateSettings((s) => s.dossierTelechargements = dossier);
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _viderTelechargements() async {
+    final n = await downloads.clear();
+    await _refreshDownloadSize();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$n fichier(s) supprimé(s).')),
+    );
   }
 
   Future<void> _refreshCoverSize() async {
@@ -1011,6 +1037,62 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       title: 'Scanner les serveurs à l\'ouverture',
                       subtitle:
                           'Plus long au démarrage, et réveille le PC si besoin.',
+                    ),
+                  ],
+                ),
+              if (!_servers)
+                _card(
+                  icon: Icons.download_for_offline_outlined,
+                  title: 'Téléchargements',
+                  children: [
+                    Text(
+                      'Les fichiers d\'un serveur peuvent être copiés sur '
+                      'l\'appareil pour être lus sans réseau. Une copie '
+                      'présente est toujours préférée au serveur.',
+                      style: TextStyle(
+                          color: Palette.muted, fontSize: 12, height: 1.4),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      s.dossierTelechargements.isEmpty
+                          ? 'Dossier de l\'application (invisible depuis le gestionnaire de fichiers).'
+                          : s.dossierTelechargements,
+                      style: TextStyle(color: Palette.kin, fontSize: 12),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      downloads.count == 0
+                          ? 'Aucune copie.'
+                          : '${downloads.count} fichier(s) · ${(_downloadBytes / 1000000).toStringAsFixed(1)} Mo',
+                      style: TextStyle(color: Palette.muted, fontSize: 12),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: _choisirDossierTelechargements,
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          label: const Text('Choisir le dossier'),
+                        ),
+                        if (s.dossierTelechargements.isNotEmpty)
+                          OutlinedButton.icon(
+                            onPressed: () async {
+                              await library.updateSettings(
+                                  (s) => s.dossierTelechargements = '');
+                              if (mounted) setState(() {});
+                            },
+                            icon: const Icon(Icons.undo, size: 18),
+                            label: const Text('Par défaut'),
+                          ),
+                        if (downloads.count > 0)
+                          OutlinedButton.icon(
+                            onPressed: _viderTelechargements,
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            label: const Text('Tout supprimer'),
+                          ),
+                      ],
                     ),
                   ],
                 ),

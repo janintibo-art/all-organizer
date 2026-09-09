@@ -77,6 +77,9 @@ class AppSettings {
   int serveurPort = 8321;
   String serveurJeton = '';
   List<String> serveurDossiers = [];
+  /// Ou deposer les fichiers rapatries d'un serveur. Vide : un dossier de
+  /// l'application, invisible depuis le gestionnaire de fichiers.
+  String dossierTelechargements = '';
   bool scanServersOnStart = false;
   String viewMode = 'grid'; // grid | list | genre
   String sortMode = 'alpha'; // alpha | score | year | episodes | recent
@@ -122,6 +125,7 @@ class AppSettings {
         'serveurPort': serveurPort,
         'serveurJeton': serveurJeton,
         'serveurDossiers': serveurDossiers,
+        'dossierTelechargements': dossierTelechargements,
         'scanServersOnStart': scanServersOnStart,
         'viewMode': viewMode,
         'sortMode': sortMode,
@@ -171,6 +175,7 @@ class AppSettings {
     s.serveurDossiers = (j['serveurDossiers'] as List? ?? [])
         .map((e) => e.toString())
         .toList();
+    s.dossierTelechargements = j['dossierTelechargements'] as String? ?? '';
     s.scanServersOnStart = j['scanServersOnStart'] as bool? ?? false;
     s.viewMode = j['viewMode'] as String? ?? 'grid';
     s.sortMode = j['sortMode'] as String? ?? 'alpha';
@@ -1023,10 +1028,27 @@ class LibraryController extends ChangeNotifier {
         items.add(trouve);
       }
 
+      // Le PC a deja identifie ses dossiers : on recopie ses fiches au lieu
+      // de refaire les recherches en ligne. Aucun fichier n'est transfere.
+      var reprises = 0;
+      final fiches = await ServerApi.library(serveur);
+      if (fiches != null) {
+        final parId = {for (final a in items) a.id: a};
+        for (final f in fiches) {
+          final item = parId['${serveur.id}|${f.chemin}'];
+          if (item == null || item.metaFetched) continue;
+          applyMeta(item, f.fiche);
+          reprises++;
+        }
+      }
+
       await music.mergeRemote(serveur.id, resultat.tracks);
       await save();
+      final reprise =
+          reprises == 0 ? '' : ' · $reprises fiche(s) reprises du PC';
       return '${resultat.items.length} titre(s) et '
-          '${resultat.tracks.length} morceau(x) trouvés sur ${serveur.name}.';
+          '${resultat.tracks.length} morceau(x) trouvés sur ${serveur.name}'
+          '$reprise.';
     } catch (e) {
       return 'Le scan du serveur a échoué : $e';
     } finally {

@@ -6,6 +6,7 @@ import 'dart:async';
 import 'screens/splash_screen.dart';
 import 'services/anime_index.dart';
 import 'services/audio_player_service.dart';
+import 'services/downloads.dart';
 import 'services/library_controller.dart';
 import 'services/media_server.dart';
 import 'services/music_controller.dart';
@@ -245,6 +246,12 @@ Future<void> main() async {
   // bibliotheque s'affiche sans l'attendre.
   if (library.settings.useIndex) {
     unawaited(AnimeIndex.load());
+  }
+
+  try {
+    await downloads.load();
+  } catch (e) {
+    startupErrors.add('Téléchargements : $e');
   }
 
   try {

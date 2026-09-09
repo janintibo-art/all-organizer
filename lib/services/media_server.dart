@@ -6,6 +6,8 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 
+import 'library_controller.dart';
+
 /// Serveur de medias embarque dans l'application de bureau.
 ///
 /// Reprend a l'identique le protocole de `serveur.py` : /api/ping,
@@ -165,6 +167,9 @@ class MediaServer {
             ]
           });
           return;
+        case '/api/bibliotheque':
+          await _json(reponse, _bibliotheque());
+          return;
         case '/api/liste':
           await _lister(reponse, params['chemin'] ?? '');
           return;
@@ -202,6 +207,58 @@ class MediaServer {
     reponse.headers.contentLength = corps.length;
     reponse.add(corps);
     await reponse.close();
+  }
+
+  // ------------------------------------------------------------- bibliotheque
+
+  /// Fiches deja identifiees sur ce PC, rangees sous le chemin que le
+  /// telephone voit. Il n'a plus qu'a les recopier au lieu de refaire les
+  /// recherches TMDB et AniList.
+  ///
+  /// Aucun fichier n'est envoye : seulement les titres, affiches, synopsis,
+  /// genres et numeros d'episodes.
+  static Map<String, Object> _bibliotheque() {
+    final fiches = <Map<String, Object?>>[];
+
+    for (final item in library.items) {
+      // Les fiches venues d'un autre serveur ne sont pas les notres.
+      if (item.remote || !item.metaFetched) continue;
+
+      final relatif = _relatif(item.id);
+      if (relatif == null) continue;
+
+      fiches.add({
+        'chemin': relatif,
+        'fiche': item.toMeta().toJson(),
+        'titreDossier': item.folderTitle,
+      });
+    }
+
+    return {
+      'version': 1,
+      'genereLe': DateTime.now().toIso8601String(),
+      'fiches': fiches,
+    };
+  }
+
+  /// Traduit un chemin disque en chemin publie, ou null s'il n'est sous
+  /// aucune racine.
+  static String? _relatif(String cheminDisque) {
+    final cible = _reel(cheminDisque);
+    if (cible == null) return null;
+
+    for (final entree in _racines.entries) {
+      final base = _reel(entree.value);
+      if (base == null) continue;
+      if (cible == base) return entree.key;
+      if (cible.startsWith(base + Platform.pathSeparator)) {
+        final reste = cible
+            .substring(base.length + 1)
+            .replaceAll('\\', '/');
+        return '${entree.key}/$reste';
+      }
+    }
+    return null;
   }
 
   // ------------------------------------------------------------------ listage

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../main.dart';
+import '../services/downloads.dart';
 import '../models/track.dart';
 import '../services/audio_player_service.dart';
 import '../services/music_controller.dart';
@@ -241,6 +242,44 @@ class AlbumScreen extends StatelessWidget {
                     icon: const Icon(Icons.shuffle, size: 18),
                     label: const Text('Au hasard'),
                   ),
+                  if (morceaux.any((t) => t.serverId != null)) ...[
+                    const SizedBox(width: 10),
+                    ListenableBuilder(
+                      listenable: downloads,
+                      builder: (context, _) {
+                        final manquants = morceaux
+                            .where((t) =>
+                                t.serverId != null &&
+                                !downloads.has(t.serverId!, t.path))
+                            .toList();
+                        return OutlinedButton.icon(
+                          onPressed: manquants.isEmpty || downloads.busy
+                              ? null
+                              : () async {
+                                  final faits =
+                                      await downloads.tracks(manquants);
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(faits == 0
+                                          ? (downloads.lastError ??
+                                              'Rien à télécharger.')
+                                          : '$faits morceau(x) téléchargé(s).'),
+                                    ),
+                                  );
+                                },
+                          icon: Icon(
+                              manquants.isEmpty
+                                  ? Icons.download_done
+                                  : Icons.download_outlined,
+                              size: 18),
+                          label: Text(manquants.isEmpty
+                              ? 'Hors connexion'
+                              : 'Télécharger'),
+                        );
+                      },
+                    ),
+                  ],
                 ],
               ),
             ),

@@ -5,6 +5,7 @@ import 'package:just_audio/just_audio.dart';
 
 import '../models/track.dart';
 import 'cover_cache.dart';
+import 'downloads.dart';
 
 /// Lecture audio, y compris écran éteint et depuis l'écran verrouillé.
 ///
@@ -78,7 +79,11 @@ class AudioHandlerMusique extends BaseAudioHandler
     await player.setAudioSource(
       ConcatenatingAudioSource(
         children: liste
-            .map((t) => AudioSource.file(t.path, tag: _versMediaItem(t)))
+            .map((t) => MediaSource.isRemote(t)
+                ? AudioSource.uri(Uri.parse(MediaSource.forTrack(t)),
+                    tag: _versMediaItem(t))
+                : AudioSource.file(MediaSource.forTrack(t),
+                    tag: _versMediaItem(t)))
             .toList(),
       ),
       initialIndex: index.clamp(0, liste.length - 1),

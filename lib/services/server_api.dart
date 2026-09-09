@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/media_meta.dart';
 import '../models/server_profile.dart';
 import 'http_client.dart';
 
@@ -125,6 +126,32 @@ class ServerApi {
   ///
   /// Le jeton passe par l'adresse et non par un en-tête : les lecteurs
   /// vidéo et audio ouvrent l'adresse eux-mêmes, sans nos en-têtes.
+  /// Fiches deja identifiees par le PC. Chaque entree donne le chemin
+  /// publie et les metadonnees a recopier. Renvoie null si le serveur ne
+  /// connait pas cette route — une version anterieure, par exemple.
+  static Future<List<RemoteFiche>?> library(ServerProfile s) async {
+    lastError = null;
+    try {
+      final res = await http
+          .get(Uri.parse('${s.baseUrl}/api/bibliotheque'), headers: _headers(s))
+          .timeout(const Duration(seconds: 30));
+
+      if (res.statusCode == 404) return null;
+      if (res.statusCode != 200) {
+        lastError = 'HTTP ${res.statusCode}';
+        return null;
+      }
+
+      final body = jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+      return (body['fiches'] as List? ?? [])
+          .map((e) => RemoteFiche.fromJson(Map<String, dynamic>.from(e as Map)))
+          .toList();
+    } catch (e) {
+      lastError = _lisible(e);
+      return null;
+    }
+  }
+
   static String fileUrl(ServerProfile s, String path) {
     final uri = Uri.parse('${s.baseUrl}/fichier').replace(queryParameters: {
       'chemin': path,
@@ -145,4 +172,25 @@ class ServerApi {
     }
     return texte;
   }
+}
+
+
+/// Une fiche publiee par le serveur, rangee sous le chemin que le client voit.
+class RemoteFiche {
+  final String chemin;
+  final String titreDossier;
+  final MediaMeta fiche;
+
+  const RemoteFiche({
+    required this.chemin,
+    required this.titreDossier,
+    required this.fiche,
+  });
+
+  factory RemoteFiche.fromJson(Map<String, dynamic> j) => RemoteFiche(
+        chemin: j['chemin'] as String? ?? '',
+        titreDossier: j['titreDossier'] as String? ?? '',
+        fiche: MediaMeta.fromJson(
+            Map<String, dynamic>.from(j['fiche'] as Map? ?? {})),
+      );
 }

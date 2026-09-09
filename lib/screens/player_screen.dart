@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../main.dart';
+import '../services/downloads.dart';
 import '../models/media_item.dart';
 import '../services/library_controller.dart';
 import '../services/opensubtitles_api.dart';
@@ -80,7 +81,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
     _player.open(
       Playlist(
-        widget.episodes.map((e) => Media(Uri.file(e.path).toString())).toList(),
+        widget.episodes
+            .map((e) => Media(widget.item == null
+                ? Uri.file(e.path).toString()
+                : MediaSource.forEpisode(widget.item!, e)))
+            .toList(),
         index: widget.startIndex,
       ),
     );

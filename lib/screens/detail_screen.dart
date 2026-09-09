@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../main.dart';
 import '../models/media_item.dart';
 import '../models/media_meta.dart';
+import '../services/downloads.dart';
 import '../services/library_controller.dart';
 import '../services/metadata_service.dart';
 import '../widgets/poster_image.dart';
@@ -185,6 +186,23 @@ class _DetailScreenState extends State<DetailScreen> {
         ],
       ),
     );
+  }
+
+  /// Rapatrie tous les episodes d'une saison qui manquent encore.
+  Future<void> _telechargerSaison(List<int> indices) async {
+    final liste = [for (final i in indices) item.episodes[i]];
+    final faits = await downloads.episodes(item, liste);
+    if (!mounted) return;
+    setState(() {});
+    _dire(faits == 0
+        ? (downloads.lastError ?? 'Rien à télécharger.')
+        : '$faits fichier(s) téléchargé(s).');
+  }
+
+  void _dire(String? message) {
+    if (message == null || !mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _play(int index, {Duration at = Duration.zero}) {
@@ -406,17 +424,33 @@ class _DetailScreenState extends State<DetailScreen> {
                 ),
               ),
               for (final entry in seasons.entries) ...[
-                if (seasons.length > 1)
+                if (seasons.length > 1 || item.remote)
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-                      child: Text(
-                        entry.key,
-                        style: TextStyle(
-                            color: Palette.kin,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              entry.key,
+                              style: TextStyle(
+                                  color: Palette.kin,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.5),
+                            ),
+                          ),
+                          if (item.remote)
+                            TextButton.icon(
+                              onPressed: downloads.busy
+                                  ? null
+                                  : () => _telechargerSaison(entry.value),
+                              icon: const Icon(Icons.download_outlined,
+                                  size: 16),
+                              label: const Text('Tout prendre',
+                                  style: TextStyle(fontSize: 12)),
+                            ),
+                        ],
                       ),
                     ),
                   ),
@@ -674,8 +708,14 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Widget _episodeTile(int index) {
     final e = item.episodes[index];
-    final missing = !library.episodeExists(e);
+    // Un episode distant n'est pas « introuvable » : il est simplement
+    // ailleurs. Seuls les fichiers locaux se verifient sur le disque.
+    final missing = !item.remote && !library.episodeExists(e);
     final seen = item.isWatched(e);
+    final serverId = item.serverId;
+    final copie = serverId != null && downloads.has(serverId, e.path);
+    final avance =
+        serverId == null ? null : downloads.progressOf(serverId, e.path);
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
@@ -714,7 +754,44 @@ class _DetailScreenState extends State<DetailScreen> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontSize: 11, color: Palette.muted)),
-      trailing: Icon(Icons.play_circle_outline, color: Palette.muted),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (serverId != null)
+            if (avance != null)
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  value: avance > 0 ? avance : null,
+                  strokeWidth: 2,
+                  color: Palette.kin,
+                ),
+              )
+            else
+              IconButton(
+                tooltip: copie
+                    ? 'Supprimer la copie'
+                    : 'Télécharger sur l\'appareil',
+                icon: Icon(
+                    copie
+                        ? Icons.download_done
+                        : Icons.download_for_offline_outlined,
+                    size: 20,
+                    color: copie ? Palette.kin : Palette.muted),
+                onPressed: () async {
+                  if (copie) {
+                    await downloads.remove(serverId, e.path);
+                  } else {
+                    final ok = await downloads.episode(item, e);
+                    if (!ok && mounted) _dire(downloads.lastError);
+                  }
+                  if (mounted) setState(() {});
+                },
+              ),
+          Icon(Icons.play_circle_outline, color: Palette.muted),
+        ],
+      ),
       onTap: missing ? null : () => _play(index),
     );
   }
