@@ -423,10 +423,10 @@ class _HomeScreenState extends State<HomeScreen> {
             ],
           ),
           const SizedBox(height: 10),
-          SizedBox(
-            height: 32,
-            child: ListView(
+          SingleChildScrollView(
               scrollDirection: Axis.horizontal,
+              child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 _sortChip(),
                 const SizedBox(width: 8),

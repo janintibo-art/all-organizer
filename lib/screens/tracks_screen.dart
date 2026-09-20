@@ -312,10 +312,10 @@ class _TracksScreenState extends State<TracksScreen> {
             ),
           ),
           const SizedBox(height: 10),
-          SizedBox(
-            height: 32,
-            child: ListView(
+          SingleChildScrollView(
               scrollDirection: Axis.horizontal,
+              child: Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
                 PopupMenuButton<String>(
                   color: Palette.surface,

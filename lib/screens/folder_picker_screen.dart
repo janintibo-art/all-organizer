@@ -505,13 +505,10 @@ class _FolderPickerScreenState extends State<FolderPickerScreen> {
       ));
     }
 
-    return SizedBox(
-      height: 36,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        reverse: true, // le dossier courant reste visible
-        child: Row(children: crumbs),
-      ),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      reverse: true, // le dossier courant reste visible
+      child: Row(mainAxisSize: MainAxisSize.min, children: crumbs),
     );
   }
 

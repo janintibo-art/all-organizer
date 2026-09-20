@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
@@ -277,6 +278,21 @@ Future<void> main() async {
   runApp(const AllOrganizerApp());
 }
 
+/// Sur ordinateur, Flutter refuse par defaut de faire defiler a la souris :
+/// seuls le doigt et le pave tactile sont acceptes. Les bandeaux de filtres
+/// deviendraient alors inatteignables des que les genres depassent l'ecran.
+class AppScrollBehavior extends MaterialScrollBehavior {
+  const AppScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+        PointerDeviceKind.touch,
+        PointerDeviceKind.mouse,
+        PointerDeviceKind.stylus,
+        PointerDeviceKind.trackpad,
+      };
+}
+
 class AllOrganizerApp extends StatelessWidget {
   const AllOrganizerApp({super.key});
 
@@ -306,6 +322,7 @@ class AllOrganizerApp extends StatelessWidget {
     return MaterialApp(
       title: 'All Organizer',
       debugShowCheckedModeBanner: false,
+      scrollBehavior: const AppScrollBehavior(),
       theme: base.copyWith(
         bottomSheetTheme:
             BottomSheetThemeData(backgroundColor: Palette.surface),
