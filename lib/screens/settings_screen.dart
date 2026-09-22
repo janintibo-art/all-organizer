@@ -776,31 +776,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
                           backgroundColor: Palette.raised,
                           color: Palette.shu),
                     ),
-                  _switch(
-                    value: s.aiWebSearch,
-                    onChanged: (v) =>
-                        library.updateSettings((s) => s.aiWebSearch = v),
-                    title: 'Autoriser la recherche web',
-                    subtitle:
-                        'Uniquement avec un modèle qui la prend en charge.',
-                  ),
+                  if (AiService.isRetired(s.aiModel))
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Le modèle « ${s.aiModel} » a été retiré par son '
+                        'fournisseur : toutes les requêtes échouent. Choisis-en '
+                        'un autre, par exemple ${AiService.defaultModel}.',
+                        style: TextStyle(
+                            color: Palette.shu, fontSize: 12, height: 1.4),
+                      ),
+                    ),
+                  if (AiService.supportsWeb(s.aiProvider))
+                    _switch(
+                      value: s.aiWebSearch,
+                      onChanged: (v) =>
+                          library.updateSettings((s) => s.aiWebSearch = v),
+                      title: 'Recherche web OpenRouter',
+                      subtitle:
+                          'Payante à la requête, même avec un modèle gratuit.',
+                    ),
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      AiService.supportsWeb(s.aiModel)
-                          ? 'Ce modèle peut consulter le web : les nouveautés '
-                              'et les sorties récentes lui sont accessibles.'
-                          : 'Ce modèle ne consulte pas Internet : sa connaissance '
-                              's\'arrête à son entraînement. Pour les nouveautés, '
-                              'choisis « groq/compound » ou « groq/compound-mini ». '
-                              'Les modèles « gpt-oss » consomment beaucoup de jetons ; '
-                              '« llama-3.3-70b-versatile » répond plus directement.',
+                      'La recherche IA n\'a pas besoin du web : l\'IA traduit '
+                      'ta demande en critères, AniList et TMDB répondent avec '
+                      'des titres réels et à jour, puis elle choisit parmi eux. '
+                      'Groq a retiré ses modèles « compound » le 21 septembre '
+                      '2026 : c\'étaient les seuls à consulter le web chez lui. '
+                      '« llama-3.3-70b-versatile » reste le choix conseillé ; '
+                      'les « gpt-oss » consomment beaucoup de jetons.',
                       style: TextStyle(
-                          color: AiService.supportsWeb(s.aiModel)
-                              ? Palette.kin
-                              : Palette.muted,
-                          fontSize: 11.5,
-                          height: 1.4),
+                          color: Palette.muted, fontSize: 11.5, height: 1.4),
                     ),
                   ),
                   if (_aiMessage != null)

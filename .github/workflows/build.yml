@@ -109,12 +109,51 @@ jobs:
           --build-name=1.${{ github.run_number }}.0
           --build-number=${{ github.run_number }}
 
+      # Flutter exige ces trois DLL a cote de l'executable. Elles sont
+      # presentes sur la plupart des PC grace a d'autres logiciels, mais pas
+      # sur une machine neuve : l'application refuserait alors de demarrer.
+      - name: Embarquer les DLL Visual C++
+        shell: pwsh
+        run: |
+          $rel = "build/windows/x64/runner/Release"
+          foreach ($dll in "msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll") {
+            $src = Join-Path $env:WINDIR "System32\$dll"
+            if (-not (Test-Path $src)) { throw "DLL introuvable sur la machine de compilation : $src" }
+            Copy-Item $src $rel -Force
+          }
+          Get-ChildItem $rel -Filter "*140*.dll" | Format-Table Name, Length
+
       - name: Compresser l'application
         shell: pwsh
-        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath AllOrganizer-Windows.zip
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath AllOrganizer-Windows-portable.zip
+
+      # Inno Setup n'est pas garanti sur les machines GitHub : on l'installe
+      # s'il manque. Chocolatey y est toujours present.
+      - name: Installer Inno Setup si besoin
+        shell: pwsh
+        run: |
+          $defaut = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and -not (Test-Path $defaut)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Construire l'installateur
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=1.${{ github.run_number }}.0" "installer\all_organizer.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AllOrganizer-Windows
-          path: AllOrganizer-Windows.zip
+          name: AllOrganizer-Installateur-Windows
+          path: dist/AllOrganizer-Setup-*.exe
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AllOrganizer-Portable-Windows
+          path: AllOrganizer-Windows-portable.zip
           retention-days: 30

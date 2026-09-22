@@ -6,6 +6,7 @@ import '../models/media_meta.dart';
 import '../services/library_controller.dart';
 import '../services/tmdb_api.dart';
 import '../services/tvmaze_api.dart';
+import '../services/ai_search.dart';
 import 'ai_search_screen.dart';
 import 'discover_detail_screen.dart';
 
@@ -430,7 +431,13 @@ class _DiscoverScreenState extends State<DiscoverScreen> {
                   label: 'Recherche IA',
                   selected: false,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AiSearchScreen()),
+                    MaterialPageRoute(
+                      builder: (_) => AiSearchScreen(
+                        scope: widget.kidsOnly
+                            ? AiScope.kids
+                            : (_series ? AiScope.series : AiScope.movie),
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),

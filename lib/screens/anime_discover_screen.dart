@@ -12,6 +12,7 @@ import '../services/kitsu_api.dart';
 import '../services/tmdb_api.dart';
 import '../services/library_controller.dart';
 import '../services/metadata_service.dart';
+import '../services/ai_search.dart';
 import 'ai_search_screen.dart';
 import 'discover_detail_screen.dart';
 
@@ -713,7 +714,9 @@ class _AnimeDiscoverScreenState extends State<AnimeDiscoverScreen> {
                   label: 'Recherche IA',
                   selected: false,
                   onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const AiSearchScreen()),
+                    MaterialPageRoute(
+                        builder: (_) =>
+                            const AiSearchScreen(scope: AiScope.anime)),
                   ),
                 ),
                 const SizedBox(width: 8),

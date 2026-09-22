@@ -2,19 +2,22 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../main.dart';
-import '../models/media_meta.dart';
+import '../services/ai_search.dart';
 import '../services/ai_service.dart';
 import '../services/library_controller.dart';
-import '../services/metadata_service.dart';
 import 'discover_detail_screen.dart';
 
 /// Recherche en langage naturel.
 ///
-/// L'IA propose des titres, mais rien n'est affiché tel quel : chaque titre
-/// est confronté à l'index local puis aux bases en ligne. Ce qui n'existe
-/// pas disparaît, ce qui explique le décompte affiché en fin de recherche.
+/// Le modèle traduit la demande en filtres, les catalogues répondent avec
+/// des titres réels, puis le modèle choisit parmi eux. Rien d'inventé ne
+/// peut apparaître, et les nouveautés sont là puisque les catalogues sont
+/// à jour — sans dépendre d'une recherche web chez le fournisseur d'IA.
 class AiSearchScreen extends StatefulWidget {
-  const AiSearchScreen({super.key});
+  /// Onglet d'où l'on vient : il fixe la catégorie proposée par défaut.
+  final AiScope scope;
+
+  const AiSearchScreen({super.key, this.scope = AiScope.anime});
 
   @override
   State<AiSearchScreen> createState() => _AiSearchScreenState();
@@ -23,21 +26,41 @@ class AiSearchScreen extends StatefulWidget {
 class _AiSearchScreenState extends State<AiSearchScreen> {
   final _controller = TextEditingController();
 
-  final List<_Found> _results = [];
+  late AiScope _scope = widget.scope;
+  List<AiPick> _results = [];
   bool _busy = false;
   String? _message;
-  int _discarded = 0;
+  String _understood = '';
 
-  static const List<List<String>> _presets = [
-    ['Nouveautés de la saison', 'Quelles séries commencent cette saison ?'],
-    [
-      'Comme ma bibliothèque',
-      'Propose des séries proches de celles que je possède déjà.'
+  static const Map<AiScope, List<List<String>>> _presets = {
+    AiScope.anime: [
+      ['Nouveautés de la saison', 'Les séries qui passent cette saison.'],
+      ['Comme ma bibliothèque', 'Des séries proches de celles que je possède.'],
+      ['Court et drôle', 'Une comédie de treize épisodes au plus, légère.'],
+      ['À pleurer', 'Un drame bouleversant, bien écrit, fin comprise.'],
+      ['Vieux classiques', 'Des classiques d\'avant 2005 qui tiennent encore.'],
     ],
-    ['Court et drôle', 'Une comédie de moins de treize épisodes, légère.'],
-    ['À pleurer', 'Un drame bouleversant, bien écrit, fin comprise.'],
-    ['Vieux classiques', 'Des classiques d\'avant 2005 qui tiennent encore.'],
-  ];
+    AiScope.movie: [
+      ['Sorties récentes', 'Les films sortis ces derniers mois.'],
+      ['Comme ma bibliothèque', 'Des films proches de ceux que je possède.'],
+      ['Comédie légère', 'Une comédie légère pour se détendre, moins de deux heures.'],
+      ['Suspense', 'Un thriller haletant avec un bon retournement.'],
+      ['Grands classiques', 'Des grands classiques du cinéma, très bien notés.'],
+    ],
+    AiScope.series: [
+      ['En ce moment', 'Les séries récentes dont on parle.'],
+      ['Comme ma bibliothèque', 'Des séries proches de celles que je possède.'],
+      ['Mini-série', 'Une mini-série courte, huit épisodes au plus.'],
+      ['Policier', 'Une série policière ou d\'enquête prenante.'],
+      ['Incontournables', 'Les séries les mieux notées de tous les temps.'],
+    ],
+    AiScope.kids: [
+      ['Pour les petits', 'Des dessins animés doux pour les tout-petits.'],
+      ['En famille', 'Un film d\'animation à regarder en famille.'],
+      ['Aventure', 'Une grande aventure pour enfants.'],
+      ['Rire ensemble', 'Une comédie familiale drôle pour tous les âges.'],
+    ],
+  };
 
   @override
   void dispose() {
@@ -45,88 +68,50 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
     super.dispose();
   }
 
-  bool get _webAvailable =>
+  bool get _webActive =>
       library.settings.aiWebSearch &&
-      AiService.supportsWeb(library.settings.aiModel);
+      AiService.supportsWeb(library.settings.aiProvider);
 
   Future<void> _run(String request) async {
     if (request.trim().isEmpty || _busy) return;
-
-    final settings = library.settings;
-    if (settings.aiKey.trim().isEmpty) {
-      setState(() => _message =
-          'Renseigne une clé IA dans Réglages → Assistant IA.');
-      return;
-    }
+    FocusScope.of(context).unfocus();
 
     setState(() {
       _busy = true;
-      _results.clear();
-      _discarded = 0;
-      _message = _webAvailable
-          ? 'Recherche en cours, le modèle peut consulter le web…'
-          : 'Recherche en cours…';
+      _results = [];
+      _understood = '';
+      _message = 'Analyse de la demande…';
     });
 
-    final owned = library.items
-        .where((a) => a.metaFetched)
-        .map((a) => a.romajiTitle ?? a.title)
-        .toList();
-
-    final suggestions = await AiService.suggest(
-      request: request,
-      provider: settings.aiProvider,
-      apiKey: settings.aiKey,
-      model: settings.aiModel,
-      custom: settings.aiEndpoint,
-      ownedTitles: owned,
-      webSearch: _webAvailable,
+    final outcome = await AiSearch.run(
+      request: request.trim(),
+      scope: _scope,
+      onProgress: (m) {
+        if (mounted) setState(() => _message = m);
+      },
     );
-
-    if (!mounted) return;
-
-    if (suggestions.isEmpty) {
-      setState(() {
-        _busy = false;
-        _message = AiService.lastError ?? 'Aucune proposition.';
-      });
-      return;
-    }
-
-    setState(() => _message = 'Vérification de ${suggestions.length} titres…');
-
-    var discarded = 0;
-    for (final suggestion in suggestions) {
-      // Chaque titre proposé est vérifié auprès de TMDB avant d'être montré.
-      final meta = await MetadataService.smartSearch(
-        suggestion.title,
-        source: settings.metaSource,
-        tmdbKey: settings.tmdbKey,
-      );
-
-      if (meta == null) {
-        discarded++;
-        continue;
-      }
-      if (!mounted) return;
-      setState(() => _results.add(_Found(meta!, suggestion.reason)));
-    }
 
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _discarded = discarded;
-      final tools = AiService.lastTools;
-      _message = _results.isEmpty
-          ? 'Aucun titre proposé n\'a pu être vérifié.'
-          : '${_results.length} série(s) vérifiée(s)'
-              '${discarded > 0 ? ', $discarded écartée(s) faute de correspondance' : ''}'
-              '${tools.contains('web_search') ? ' · le modèle a consulté le web' : ''}.';
+      _results = outcome.picks;
+      _understood = outcome.understood;
+      if (outcome.error != null) {
+        _message = outcome.error;
+      } else if (outcome.picks.isEmpty) {
+        _message = 'Aucun titre ne correspond vraiment. Reformule ou élargis.';
+      } else {
+        _message = '${outcome.picks.length} proposition(s) choisie(s) parmi '
+            '${outcome.candidates} titres réels'
+            '${outcome.usedWeb ? ' · web consulté' : ''}.';
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final presets = _presets[_scope] ?? const [];
+
     return Scaffold(
       appBar: darkAppBar(
         title: Column(
@@ -143,14 +128,11 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
             Padding(
               padding: const EdgeInsets.only(left: 11, top: 1),
               child: Text(
-                _webAvailable
-                    ? 'Avec accès au web'
-                    : 'Sans accès au web · connaissance figée',
+                _scope == AiScope.anime
+                    ? 'Titres réels d\'AniList, à jour'
+                    : 'Titres réels de TMDB, à jour',
                 style: TextStyle(
-                  color: _webAvailable ? Palette.kin : Palette.muted,
-                  fontSize: 10.5,
-                  letterSpacing: 0.8,
-                ),
+                    color: Palette.kin, fontSize: 10.5, letterSpacing: 0.8),
               ),
             ),
           ],
@@ -161,7 +143,33 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Catégorie : on peut chercher un film depuis l'onglet Animes.
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final sc in AiScope.values) ...[
+                        _chip(
+                          label: sc.label,
+                          selected: _scope == sc,
+                          onTap: _busy
+                              ? null
+                              : () => setState(() {
+                                    _scope = sc;
+                                    _results = [];
+                                    _understood = '';
+                                    _message = null;
+                                  }),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: _controller,
                   textInputAction: TextInputAction.search,
@@ -177,29 +185,28 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                SizedBox(
-                  height: 32,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    itemCount: _presets.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 8),
-                    itemBuilder: (context, i) => GestureDetector(
-                      onTap: () {
-                        _controller.text = _presets[i][1];
-                        _run(_presets[i][1]);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 7),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Palette.line),
-                          borderRadius: BorderRadius.circular(radiusSm),
+                // Hauteur libre : une hauteur fixe coupe le texte sous Windows,
+                // dont la police est plus haute que celle d'Android.
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final p in presets) ...[
+                        _chip(
+                          label: p[0],
+                          selected: false,
+                          outlined: true,
+                          onTap: _busy
+                              ? null
+                              : () {
+                                  _controller.text = p[1];
+                                  _run(p[1]);
+                                },
                         ),
-                        child: Text(_presets[i][0],
-                            style: TextStyle(
-                                fontSize: 12.5, color: Palette.muted)),
-                      ),
-                    ),
+                        const SizedBox(width: 8),
+                      ],
+                    ],
                   ),
                 ),
               ],
@@ -207,11 +214,28 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
           ),
           if (_busy)
             Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               child: LinearProgressIndicator(
                   minHeight: 3,
                   backgroundColor: Palette.raised,
                   color: Palette.shu),
+            ),
+          if (_understood.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.psychology_outlined,
+                      size: 15, color: Palette.kin),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text('Compris : $_understood',
+                        style: TextStyle(
+                            color: Palette.kin, fontSize: 12, height: 1.4)),
+                  ),
+                ],
+              ),
             ),
           if (_message != null)
             Padding(
@@ -226,13 +250,13 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
                     child: Padding(
                       padding: const EdgeInsets.all(32),
                       child: Text(
-                        _webAvailable
-                            ? 'Pose ta question en français. Le modèle peut aller '
-                                'vérifier les sorties récentes en ligne.'
-                            : 'Pose ta question en français. Pour les nouveautés, '
-                                'choisis un modèle « compound » dans les réglages : '
-                                'sans accès au web, le modèle ignore ce qui est '
-                                'sorti après son entraînement.',
+                        'Pose ta question en français : une ambiance, une '
+                        'durée, une époque, un titre que tu as aimé. '
+                        'L\'IA la traduit en critères, le catalogue répond '
+                        'avec des titres qui existent, puis elle choisit '
+                        'les plus proches de ta demande.'
+                        '${_webActive ? '\n\nRecherche web OpenRouter active : '
+                            'elle est facturée à la requête.' : ''}',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                             color: Palette.muted, height: 1.5, fontSize: 13),
@@ -251,9 +275,35 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
     );
   }
 
-  Widget _tile(_Found found) {
+  Widget _chip({
+    required String label,
+    required bool selected,
+    required VoidCallback? onTap,
+    bool outlined = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? Palette.shu : Colors.transparent,
+          border: Border.all(color: selected ? Palette.shu : Palette.line),
+          borderRadius: BorderRadius.circular(radiusSm),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: outlined ? FontWeight.w400 : FontWeight.w500,
+            color: selected ? Colors.white : Palette.muted,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tile(AiPick found) {
     final meta = found.meta;
-    final local = library.localMatch(meta);
 
     return InkWell(
       onTap: () => Navigator.of(context).push(
@@ -290,21 +340,19 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
                 Text(
                   [
                     if (meta.year != null) '${meta.year}',
-                    if (meta.episodes != null) '${meta.episodes} ép.',
+                    if (meta.type != null) meta.type!,
+                    if (meta.episodes != null && meta.episodes! > 1)
+                      '${meta.episodes} ép.',
+                    if (meta.score != null)
+                      '★ ${meta.score!.toStringAsFixed(1)}',
                   ].join(' · '),
-                  style:
-                      TextStyle(color: Palette.muted, fontSize: 11.5),
+                  style: TextStyle(color: Palette.muted, fontSize: 11.5),
                 ),
                 if (found.reason.isNotEmpty) ...[
                   const SizedBox(height: 5),
                   Text(found.reason,
                       style: TextStyle(
                           color: Palette.kin, fontSize: 12, height: 1.35)),
-                ],
-                if (local != null) ...[
-                  const SizedBox(height: 4),
-                  Text('Déjà dans ta bibliothèque',
-                      style: TextStyle(color: Palette.sakura, fontSize: 11)),
                 ],
               ],
             ),
@@ -313,10 +361,4 @@ class _AiSearchScreenState extends State<AiSearchScreen> {
       ),
     );
   }
-}
-
-class _Found {
-  final MediaMeta meta;
-  final String reason;
-  const _Found(this.meta, this.reason);
 }

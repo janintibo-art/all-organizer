@@ -211,6 +211,105 @@ query($page:Int,$perPage:Int,$sort:[MediaSort],$genre:String,$tag:String,$format
     return const BrowsePage([], false);
   }
 
+  /// Recherche multicritere, pour la recherche IA : le modele traduit la
+  /// demande en filtres, AniList renvoie des series qui existent vraiment.
+  ///
+  /// Les dates suivent le format FuzzyDateInt d'AniList (AAAAMMJJ, 0 pour
+  /// un mois ou un jour inconnu). Renvoie une liste vide en cas d'echec,
+  /// l'appelant elargit alors ses criteres.
+  static Future<List<MediaMeta>> findByCriteria({
+    List<String> genres = const [],
+    List<String> tags = const [],
+    List<String> formats = const [],
+    int? yearFrom,
+    int? yearTo,
+    int? maxEpisodes,
+    String? season,
+    int? seasonYear,
+    String sort = 'POPULARITY_DESC',
+    bool releasedOnly = false,
+    int perPage = 40,
+  }) async {
+    if (isPaused) return const [];
+
+    // Sans borne de fin, un tri par date ramene des series seulement
+    // annoncees : on s'arrete a aujourd'hui.
+    final now = DateTime.now();
+    final aujourdhui = now.year * 10000 + now.month * 100 + now.day;
+    final fin = yearTo != null
+        ? (yearTo + 1) * 10000
+        : (releasedOnly ? aujourdhui + 1 : null);
+
+    const query = r'''
+query($perPage:Int,$sort:[MediaSort],$genres:[String],$tags:[String],$formats:[MediaFormat],$after:FuzzyDateInt,$before:FuzzyDateInt,$maxEp:Int,$season:MediaSeason,$seasonYear:Int){
+  Page(page:1,perPage:$perPage){
+    media(type:ANIME,isAdult:false,sort:$sort,genre_in:$genres,tag_in:$tags,format_in:$formats,startDate_greater:$after,startDate_lesser:$before,episodes_lesser:$maxEp,season:$season,seasonYear:$seasonYear){
+      id
+      title{romaji english native}
+      coverImage{large medium}
+      description(asHtml:false)
+      genres episodes averageScore popularity seasonYear status format
+      studios(isMain:true){nodes{name}}
+    }
+  }
+}''';
+
+    final variables = <String, dynamic>{
+      'perPage': perPage,
+      'sort': [sort],
+      if (genres.isNotEmpty) 'genres': genres,
+      if (tags.isNotEmpty) 'tags': tags,
+      if (formats.isNotEmpty) 'formats': formats,
+      // « greater » et « lesser » sont stricts : 19999999 laisse passer tout
+      // l'an 2000, 20110000 s'arrete juste apres le 31 decembre 2010.
+      if (yearFrom != null) 'after': yearFrom * 10000 - 1,
+      if (fin != null) 'before': fin,
+      // « lesser » est strict lui aussi : 13 episodes au plus -> moins de 14.
+      if (maxEpisodes != null) 'maxEp': maxEpisodes + 1,
+      if (season != null && season.isNotEmpty) 'season': season,
+      if (seasonYear != null) 'seasonYear': seasonYear,
+    };
+
+    for (var attempt = 0; attempt < 2; attempt++) {
+      await _throttle();
+      try {
+        final res = await http
+            .post(
+              Uri.parse(_url),
+              headers: AppHttp.headers(json: true),
+              body: jsonEncode({'query': query, 'variables': variables}),
+            )
+            .timeout(const Duration(seconds: 25));
+
+        if (res.statusCode == 429) {
+          await Future<void>.delayed(Duration(seconds: 2 + attempt));
+          continue;
+        }
+        if (res.statusCode != 200) {
+          // Un genre ou un tag inconnu fait echouer toute la requete : on le
+          // signale et l'appelant retente sans ce critere.
+          lastError = 'HTTP ${res.statusCode} : ${res.body}';
+          if (res.statusCode == 403) _pause();
+          return const [];
+        }
+
+        final body =
+            jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
+        final media = ((body['data'] as Map?)?['Page'] as Map?)?['media']
+                as List? ??
+            const [];
+        return media
+            .map((e) => _map(Map<String, dynamic>.from(e as Map)))
+            .whereType<MediaMeta>()
+            .toList();
+      } catch (e) {
+        lastError = e.toString();
+        await Future<void>.delayed(Duration(seconds: 1 + attempt));
+      }
+    }
+    return const [];
+  }
+
   /// Derniers episodes diffuses, le plus recent en tete.
   static Future<List<EpisodeRelease>> recentEpisodes({int page = 1}) async {
     if (isPaused) return const [];

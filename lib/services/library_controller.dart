@@ -160,6 +160,9 @@ class AppSettings {
     s.aiProvider = j['aiProvider'] as String? ?? 'groq';
     s.aiKey = j['aiKey'] as String? ?? '';
     s.aiModel = j['aiModel'] as String? ?? 'llama-3.3-70b-versatile';
+    // Un modèle retiré par son fournisseur fait échouer toutes les requêtes :
+    // on revient au modèle conseillé plutôt que de laisser l'IA muette.
+    if (AiService.isRetired(s.aiModel)) s.aiModel = AiService.defaultModel;
     s.aiEndpoint = j['aiEndpoint'] as String? ?? '';
     s.aiWebSearch = j['aiWebSearch'] as bool? ?? true;
     s.metaSource = j['metaSource'] as String? ?? 'auto';
@@ -534,22 +537,20 @@ class LibraryController extends ChangeNotifier {
         apiKey: settings.aiKey,
         model: settings.aiModel,
         custom: settings.aiEndpoint,
+        nature: _nature(item),
       );
       if (ai != null && ai.usable) {
-        meta = await MetadataService.smartSearch(
-          ai.searchQuery,
-          source: settings.metaSource,
-          episodeCount: count,
-          tmdbKey: settings.tmdbKey,
-          anime: item.kind == MediaKind.anime,
-          animeSource: settings.animeSource,
-        );
-        if (meta == null && ai.english.isNotEmpty) {
+        // Chaque écriture du titre est essayée tour à tour : TMDB connaît
+        // mieux l'original ou l'anglais, AniList le romaji.
+        for (final essai in {ai.searchQuery, ai.english, ai.french}) {
+          if (meta != null || essai.isEmpty) continue;
           meta = await MetadataService.smartSearch(
-            ai.english,
+            essai,
             source: settings.metaSource,
             episodeCount: count,
             tmdbKey: settings.tmdbKey,
+            moviesOnly: item.kind == MediaKind.movie,
+            seriesOnly: item.kind == MediaKind.series,
             anime: item.kind == MediaKind.anime,
             animeSource: settings.animeSource,
           );
@@ -818,6 +819,13 @@ class LibraryController extends ChangeNotifier {
     return incoming.length;
   }
 
+  /// Nature d'un titre, dans le vocabulaire de l'assistant IA.
+  static String _nature(MediaItem item) => switch (item.kind) {
+        MediaKind.anime => 'anime',
+        MediaKind.movie => 'film',
+        MediaKind.series => 'série',
+      };
+
   /// Demande à l'IA d'identifier une série, puis relance la recherche
   /// de fiche avec le titre qu'elle donne. Renvoie un message à afficher.
   Future<String> identifyWithAi(MediaItem item) async {
@@ -830,6 +838,7 @@ class LibraryController extends ChangeNotifier {
       apiKey: settings.aiKey,
       model: settings.aiModel,
       custom: settings.aiEndpoint,
+      nature: _nature(item),
     );
     if (ai == null) {
       return AiService.lastError ?? 'L\'IA n\'a pas répondu.';
@@ -840,8 +849,19 @@ class LibraryController extends ChangeNotifier {
     if (ai.japanese.isNotEmpty) item.nativeTitle = ai.japanese;
     if (ai.romaji.isNotEmpty) item.romajiTitle = ai.romaji;
 
-    final meta = await MetadataService.smartSearch(ai.searchQuery,
-        source: settings.metaSource, tmdbKey: settings.tmdbKey);
+    MediaMeta? meta;
+    for (final essai in {ai.searchQuery, ai.english, ai.french}) {
+      if (meta != null || essai.isEmpty) continue;
+      meta = await MetadataService.smartSearch(
+        essai,
+        source: settings.metaSource,
+        tmdbKey: settings.tmdbKey,
+        moviesOnly: item.kind == MediaKind.movie,
+        seriesOnly: item.kind == MediaKind.series,
+        anime: item.kind == MediaKind.anime,
+        animeSource: settings.animeSource,
+      );
+    }
     if (meta != null) {
       final french = item.frenchTitle;
       final japanese = item.nativeTitle;

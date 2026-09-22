@@ -155,6 +155,67 @@ class TmdbApi {
         .toList();
   }
 
+  /// Recherche multicritere, pour la recherche IA. Plusieurs genres se
+  /// combinent en « ou » (barre verticale), la periode par dates de sortie.
+  /// Deux pages sont lues pour offrir assez de choix au modele.
+  static Future<List<MediaMeta>> discoverWide(
+    String apiKey, {
+    bool series = false,
+    List<int> genreIds = const [],
+    int? yearFrom,
+    int? yearTo,
+    int? maxRuntime,
+    bool kidsOnly = false,
+    String sort = 'popularity.desc',
+  }) async {
+    await ensureGenres(apiKey);
+
+    var effectiveSort = sort;
+    if (series && sort == 'primary_release_date.desc') {
+      effectiveSort = 'first_air_date.desc';
+    }
+    final champDate = series ? 'first_air_date' : 'primary_release_date';
+    // Trier par date sans borne ramenerait des films annonces pour 2030.
+    final aujourdhui = DateTime.now().toIso8601String().substring(0, 10);
+    final parDate = effectiveSort.contains('date');
+
+    // Pour les series jeunesse, TMDB n'a pas de classification fiable :
+    // le genre Familial (10751) ou Animation (16) fait office de filtre.
+    final genres = genreIds.isNotEmpty
+        ? genreIds.join('|')
+        : (kidsOnly && series ? '10751|16' : '');
+    final finPeriode =
+        yearTo != null ? '$yearTo-12-31' : (parDate ? aujourdhui : '');
+
+    final params = <String, String>{
+      'sort_by': effectiveSort,
+      'include_adult': 'false',
+      'vote_count.gte': sort == 'vote_average.desc' ? '300' : '40',
+      if (genres.isNotEmpty) 'with_genres': genres,
+      if (yearFrom != null) '$champDate.gte': '$yearFrom-01-01',
+      if (finPeriode.isNotEmpty) '$champDate.lte': finPeriode,
+      if (maxRuntime != null && !series) 'with_runtime.lte': '$maxRuntime',
+      if (kidsOnly && !series) 'certification_country': 'FR',
+      if (kidsOnly && !series) 'certification.lte': 'U',
+    };
+
+    final out = <MediaMeta>[];
+    for (final page in [1, 2]) {
+      final body = await _get(
+        series ? '/3/discover/tv' : '/3/discover/movie',
+        apiKey,
+        {...params, 'page': '$page'},
+      );
+      final results = body?['results'] as List? ?? const [];
+      out.addAll(results
+          .map((e) =>
+              _map(Map<String, dynamic>.from(e as Map), forceSeries: series))
+          .whereType<MediaMeta>());
+      if (results.length < 20) break;
+    }
+    return out;
+  }
+
   /// Correspondance entre les tris d'AniList et ceux de TMDB.
   static const Map<String, String> _animeSorts = {
     'TRENDING_DESC': 'popularity.desc',

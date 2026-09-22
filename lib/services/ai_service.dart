@@ -3,27 +3,34 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 /// Assistant IA branché sur une API compatible OpenAI (Groq, OpenRouter,
-/// ou un serveur maison). Sert à identifier une série quand les bases de
-/// données ne reconnaissent pas le nom du dossier, et à donner le titre
-/// dans les trois écritures : romaji, anglais, français.
+/// ou un serveur maison). Sert à identifier un titre quand les bases de
+/// données ne reconnaissent pas le nom du dossier, et à interpréter les
+/// demandes de la recherche IA.
 class AiService {
   /// Dernier échec, affiché dans les réglages pour ne pas rester aveugle.
   static String? lastError;
 
-  /// Outils réellement utilisés lors de la dernière requête, quand le
-  /// système en expose la trace : « web_search », « visit_website »…
-  static List<String> lastTools = [];
+  /// Vrai si la dernière réponse a consulté le web (OpenRouter en fournit
+  /// la trace sous forme de citations).
+  static bool lastUsedWeb = false;
 
-  /// Systèmes Groq capables d'aller chercher l'information en ligne.
-  static const List<String> webCapableModels = [
+  /// Modèles retirés par leur fournisseur : une requête vers eux échoue.
+  /// Groq a arrêté ses systèmes « compound » le 21 septembre 2026, sans
+  /// remplaçant — ce sont eux qui portaient la recherche web chez Groq.
+  static const Set<String> retiredModels = {
     'groq/compound',
     'groq/compound-mini',
-  ];
+  };
 
-  static bool supportsWeb(String model) {
-    final m = model.toLowerCase();
-    return m.contains('compound') || m.endsWith(':online');
-  }
+  static const String defaultModel = 'llama-3.3-70b-versatile';
+
+  static bool isRetired(String model) =>
+      retiredModels.contains(model.trim().toLowerCase());
+
+  /// Recherche web disponible pour ce fournisseur. Seul OpenRouter la
+  /// propose encore, pour n'importe quel modèle, via le suffixe « :online ».
+  /// Elle est facturée à la requête, même avec un modèle gratuit.
+  static bool supportsWeb(String provider) => provider == 'openrouter';
 
   static String baseUrl(String provider, String custom) {
     switch (provider) {
@@ -42,7 +49,8 @@ class AiService {
         'Content-Type': 'application/json',
       };
 
-  /// Liste les modèles proposés par le fournisseur.
+  /// Liste les modèles proposés par le fournisseur, sans ceux qu'il a
+  /// retirés mais qu'il annonce parfois encore.
   static Future<List<String>> listModels({
     required String provider,
     required String apiKey,
@@ -60,6 +68,7 @@ class AiService {
       final ids = data
           .map((e) => (e as Map)['id']?.toString())
           .whereType<String>()
+          .where((id) => !isRetired(id))
           .toList()
         ..sort();
       return ids;
@@ -70,10 +79,13 @@ class AiService {
 
   /// Envoie une question et renvoie la réponse, ou null en cas d'échec.
   ///
-  /// Deux pièges avec les modèles à raisonnement du type gpt-oss : ils
-  /// consomment leur budget de jetons dans un champ « reasoning » séparé et
-  /// renvoient un « content » vide. On leur laisse donc de la marge, on leur
-  /// demande un raisonnement court, et on lit les deux champs.
+  /// [jsonMode] demande au fournisseur de garantir un objet JSON valide. Un
+  /// serveur maison peut ne pas connaître cette option : on retente alors
+  /// sans elle, le texte est de toute façon analysé avec tolérance.
+  ///
+  /// Les modèles à raisonnement (gpt-oss) consomment leur budget dans un
+  /// champ « reasoning » séparé : on leur demande un raisonnement court et
+  /// on lit les deux champs.
   static Future<String?> ask({
     required String provider,
     required String apiKey,
@@ -83,9 +95,10 @@ class AiService {
     String custom = '',
     int maxTokens = 1200,
     bool webSearch = false,
+    bool jsonMode = false,
   }) async {
     lastError = null;
-    lastTools = [];
+    lastUsedWeb = false;
     if (apiKey.trim().isEmpty) {
       lastError = 'Aucune clé renseignée.';
       return null;
@@ -94,44 +107,42 @@ class AiService {
       lastError = 'Aucun modèle choisi.';
       return null;
     }
+    if (isRetired(model)) {
+      lastError = _retire(model);
+      return null;
+    }
 
-    // OpenRouter active la recherche web par un suffixe sur le modèle,
-    // Groq par un paramètre dédié : les deux voies sont gérées ici.
     var effectiveModel = model;
     if (webSearch &&
-        provider == 'openrouter' &&
+        supportsWeb(provider) &&
         !model.toLowerCase().endsWith(':online')) {
       effectiveModel = '$model:online';
     }
 
-    final payload = <String, dynamic>{
-      'model': effectiveModel,
-      'temperature': 0.2,
-      'max_tokens': maxTokens,
-      'messages': [
-        {'role': 'system', 'content': system},
-        {'role': 'user', 'content': user},
-      ],
-      if (model.toLowerCase().contains('gpt-oss')) 'reasoning_effort': 'low',
-      if (webSearch && model.toLowerCase().contains('compound'))
-        'compound_custom': {
-          'tools': {
-            'enabled_tools': ['web_search', 'visit_website'],
-          },
-        },
-    };
+    Map<String, dynamic> payload(bool json) => {
+          'model': effectiveModel,
+          'temperature': 0.2,
+          'max_tokens': maxTokens,
+          'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user', 'content': user},
+          ],
+          if (model.toLowerCase().contains('gpt-oss')) 'reasoning_effort': 'low',
+          if (json) 'response_format': {'type': 'json_object'},
+        };
 
     try {
-      final res = await http
-          .post(
-            Uri.parse('${baseUrl(provider, custom)}/chat/completions'),
-            headers: _headers(apiKey),
-            body: jsonEncode(payload),
-          )
-          .timeout(const Duration(seconds: 60));
+      var res = await _post(provider, custom, apiKey, payload(jsonMode));
+
+      // Option JSON refusée par le serveur : on retente sans elle.
+      if (jsonMode &&
+          res.statusCode == 400 &&
+          res.body.toLowerCase().contains('response_format')) {
+        res = await _post(provider, custom, apiKey, payload(false));
+      }
 
       if (res.statusCode != 200) {
-        lastError = 'HTTP ${res.statusCode} — ${res.body}';
+        lastError = _lisible(res, model);
         return null;
       }
 
@@ -145,27 +156,75 @@ class AiService {
       final choice = choices.first as Map;
       final message = choice['message'] as Map?;
 
-      // Trace des outils : utile pour savoir si la réponse vient du web.
-      final executed = message?['executed_tools'] as List? ?? const [];
-      lastTools = executed
-          .map((t) => (t as Map)['type']?.toString() ?? '')
-          .where((t) => t.isNotEmpty)
-          .toList();
+      // OpenRouter joint les pages consultées sous forme de citations.
+      final annotations = message?['annotations'] as List? ?? const [];
+      lastUsedWeb = annotations
+          .any((a) => a is Map && a['type']?.toString() == 'url_citation');
 
       final content = message?['content']?.toString().trim();
       if (content != null && content.isNotEmpty) return content;
 
-      // Le contenu est vide : on tente le champ de raisonnement.
       final reasoning = message?['reasoning']?.toString().trim();
       if (reasoning != null && reasoning.isNotEmpty) return reasoning;
 
       final reason = choice['finish_reason']?.toString() ?? 'inconnue';
       lastError = 'Le modèle a répondu sans texte (raison : $reason). '
-          'Augmente le budget de jetons ou choisis un modèle sans raisonnement, '
-          'par exemple llama-3.3-70b-versatile.';
+          'Choisis un modèle sans raisonnement, par exemple $defaultModel.';
       return null;
     } catch (e) {
       lastError = e.toString();
+      return null;
+    }
+  }
+
+  static Future<http.Response> _post(String provider, String custom,
+      String apiKey, Map<String, dynamic> payload) {
+    return http
+        .post(
+          Uri.parse('${baseUrl(provider, custom)}/chat/completions'),
+          headers: _headers(apiKey),
+          body: jsonEncode(payload),
+        )
+        .timeout(const Duration(seconds: 60));
+  }
+
+  static String _retire(String model) =>
+      'Le modèle « $model » a été retiré par son fournisseur. '
+      'Choisis-en un autre dans Réglages → Assistant IA, par exemple '
+      '$defaultModel.';
+
+  /// Traduit les erreurs courantes en français compréhensible.
+  static String _lisible(http.Response res, String model) {
+    final brut = res.body.toLowerCase();
+    if (brut.contains('decommissioned') ||
+        brut.contains('model_not_found') ||
+        brut.contains('does not exist')) {
+      return _retire(model);
+    }
+    if (res.statusCode == 401) return 'Clé IA refusée.';
+    if (res.statusCode == 402) {
+      return 'Crédit insuffisant chez le fournisseur. La recherche web '
+          'd\'OpenRouter est payante, même avec un modèle gratuit.';
+    }
+    if (res.statusCode == 429) {
+      return 'Trop de requêtes : le quota gratuit est atteint, réessaie '
+          'dans une minute.';
+    }
+    final court =
+        res.body.length > 300 ? '${res.body.substring(0, 300)}…' : res.body;
+    return 'HTTP ${res.statusCode} — $court';
+  }
+
+  /// Extrait le premier objet JSON d'une réponse, même entourée de texte ou
+  /// de balises de code. Renvoie null si rien n'est lisible.
+  static Map<String, dynamic>? extractObject(String raw) {
+    try {
+      final start = raw.indexOf('{');
+      final end = raw.lastIndexOf('}');
+      if (start < 0 || end <= start) return null;
+      final decoded = jsonDecode(raw.substring(start, end + 1));
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
       return null;
     }
   }
@@ -195,102 +254,50 @@ class AiService {
     return 'Connexion réussie — réponse : $short';
   }
 
-  /// Propose des séries à partir d'une demande en français.
+  /// Identifie un titre à partir d'un nom de dossier.
   ///
-  /// Le modèle ne consulte pas Internet : ses titres sont ensuite vérifiés
-  /// contre l'index local avant d'être affichés. Ce qu'il invente disparaît.
-  static Future<List<AiSuggestion>> suggest({
-    required String request,
-    required String provider,
-    required String apiKey,
-    required String model,
-    String custom = '',
-    List<String> ownedTitles = const [],
-    List<String> candidates = const [],
-    int count = 12,
-    bool webSearch = false,
-  }) async {
-    const system =
-        'Tu conseilles des séries d\'animation japonaise. Si tu disposes '
-        'd\'une recherche web, utilise-la pour vérifier les dates de sortie. '
-        'Tu réponds '
-        'uniquement par un tableau JSON, sans texte autour ni balises de code. '
-        'Chaque élément : {"title":"titre en romaji","reason":"une phrase "'
-        '"courte en français"}. Utilise le titre romaji officiel, celui que '
-        'les bases de données référencent.';
-
-    final buffer = StringBuffer('Demande : $request\n');
-
-    if (ownedTitles.isNotEmpty) {
-      final sample = ownedTitles.take(40).join(', ');
-      buffer.write('\nSéries déjà possédées, à ne pas reproposer : $sample\n');
-    }
-
-    if (candidates.isNotEmpty) {
-      buffer.write('\nChoisis uniquement dans cette liste réelle, sans rien '
-          'ajouter :\n${candidates.take(60).join('\n')}\n');
-    }
-
-    buffer.write('\nRenvoie au plus $count éléments.');
-
-    final answer = await ask(
-      provider: provider,
-      apiKey: apiKey,
-      model: model,
-      custom: custom,
-      system: system,
-      user: buffer.toString(),
-      maxTokens: 2000,
-      webSearch: webSearch,
-    );
-    if (answer == null) return const [];
-
-    try {
-      final start = answer.indexOf('[');
-      final end = answer.lastIndexOf(']');
-      if (start < 0 || end <= start) {
-        lastError = 'Réponse illisible.';
-        return const [];
-      }
-      final list = jsonDecode(answer.substring(start, end + 1)) as List;
-      final out = <AiSuggestion>[];
-      for (final item in list) {
-        if (item is! Map) continue;
-        final title = item['title']?.toString().trim() ?? '';
-        if (title.isEmpty) continue;
-        out.add(AiSuggestion(title, item['reason']?.toString().trim() ?? ''));
-      }
-      return out;
-    } catch (e) {
-      lastError = e.toString();
-      return const [];
-    }
-  }
-
-  /// Identifie une série à partir d'un nom de dossier.
+  /// [nature] vaut « anime », « film » ou « série » : on ne demande pas un
+  /// titre romaji pour un film américain, ni un titre français officiel à
+  /// une série japonaise qui n'en a jamais eu.
   static Future<AiTitles?> identify({
     required String folderTitle,
     required String provider,
     required String apiKey,
     required String model,
     String custom = '',
+    String nature = 'anime',
   }) async {
-    const system =
-        'Tu identifies des séries d\'animation japonaise à partir de noms de '
-        'dossiers ou de fichiers, souvent mal orthographiés ou traduits. '
-        'Tu réponds uniquement par un objet JSON, sans texte autour, sans '
-        'balises de code.';
+    final anime = nature == 'anime';
+    final quoi = anime
+        ? 'séries d\'animation japonaise'
+        : (nature == 'film' ? 'films' : 'séries télévisées');
+
+    final system = 'Tu identifies des $quoi à partir de noms de dossiers ou '
+        'de fichiers, souvent abrégés, mal orthographiés ou traduits. Les '
+        'noms de fichiers contiennent souvent du bruit à ignorer : qualité '
+        '(1080p, x265), groupe de diffusion entre crochets, langue (VOSTFR, '
+        'MULTI), numéro de saison. Tu réponds uniquement par un objet JSON.';
+
+    final champs = anime
+        ? '{"romaji":"","english":"","french":"","japanese":"","original":"",'
+            '"year":null,"confidence":0.0}\n'
+            'romaji = titre en lettres latines utilisé au Japon, '
+            'english = titre anglais officiel, french = titre français '
+            'officiel (ou l\'anglais s\'il n\'en existe pas), japanese = '
+            'titre en écriture japonaise, original = vide.'
+        : '{"original":"","english":"","french":"","romaji":"","japanese":"",'
+            '"year":null,"confidence":0.0}\n'
+            'original = titre dans sa langue d\'origine, english = titre '
+            'anglais, french = titre français d\'exploitation, year = année '
+            'de sortie ; romaji et japanese restent vides sauf pour une '
+            'œuvre japonaise.';
 
     final user = 'Nom trouvé sur le disque : "$folderTitle".\n'
-        'Identifie la série et réponds avec ce JSON exactement :\n'
-        '{"romaji":"","english":"","french":"","japanese":"","year":null,'
-        '"confidence":0.0}\n'
-        'romaji = titre en lettres latines tel qu\'utilisé au Japon, '
-        'english = titre anglais officiel, french = titre français officiel '
-        '(ou le titre anglais si aucun titre français n\'existe), '
-        'japanese = titre en écriture japonaise. '
-        'confidence entre 0 et 1. Si tu ne reconnais pas la série, '
-        'mets des chaînes vides et confidence à 0.';
+        'Identifie le titre et réponds avec ce JSON exactement :\n'
+        '$champs\n'
+        'confidence entre 0 et 1. Si tu ne reconnais pas l\'œuvre, mets des '
+        'chaînes vides et confidence à 0 : une invention est pire qu\'une '
+        'absence de réponse.';
 
     final answer = await ask(
       provider: provider,
@@ -300,6 +307,7 @@ class AiService {
       system: system,
       user: user,
       maxTokens: 1500,
+      jsonMode: true,
     );
     if (answer == null) return null;
     final parsed = AiTitles.parse(answer);
@@ -312,18 +320,14 @@ class AiService {
   }
 }
 
-/// Une proposition de l'IA : un titre, et la raison de la proposition.
-class AiSuggestion {
-  final String title;
-  final String reason;
-  const AiSuggestion(this.title, this.reason);
-}
-
 class AiTitles {
   final String romaji;
   final String english;
   final String french;
   final String japanese;
+
+  /// Titre dans la langue d'origine, pour les œuvres non japonaises.
+  final String original;
   final int? year;
   final double confidence;
 
@@ -332,36 +336,37 @@ class AiTitles {
     this.english = '',
     this.french = '',
     this.japanese = '',
+    this.original = '',
     this.year,
     this.confidence = 0,
   });
 
   bool get usable =>
-      confidence >= 0.3 && (romaji.isNotEmpty || english.isNotEmpty);
+      confidence >= 0.3 &&
+      (romaji.isNotEmpty || english.isNotEmpty || original.isNotEmpty);
 
-  /// Meilleure requête à envoyer aux bases de données.
-  String get searchQuery => romaji.isNotEmpty ? romaji : english;
+  /// Meilleure requête à envoyer aux bases de données : le romaji pour un
+  /// anime, sinon le titre original ou anglais, que TMDB indexe tous deux.
+  String get searchQuery {
+    if (romaji.isNotEmpty) return romaji;
+    if (original.isNotEmpty) return original;
+    if (english.isNotEmpty) return english;
+    return french;
+  }
 
-  /// Les modèles ajoutent parfois du texte ou des balises autour du JSON.
   static AiTitles? parse(String raw) {
-    try {
-      final start = raw.indexOf('{');
-      final end = raw.lastIndexOf('}');
-      if (start < 0 || end <= start) return null;
-      final map =
-          jsonDecode(raw.substring(start, end + 1)) as Map<String, dynamic>;
-      return AiTitles(
-        romaji: (map['romaji'] ?? '').toString().trim(),
-        english: (map['english'] ?? '').toString().trim(),
-        french: (map['french'] ?? '').toString().trim(),
-        japanese: (map['japanese'] ?? '').toString().trim(),
-        year: map['year'] is num ? (map['year'] as num).toInt() : null,
-        confidence: map['confidence'] is num
-            ? (map['confidence'] as num).toDouble()
-            : 0,
-      );
-    } catch (_) {
-      return null;
-    }
+    final map = AiService.extractObject(raw);
+    if (map == null) return null;
+    String champ(String k) => (map[k] ?? '').toString().trim();
+    return AiTitles(
+      romaji: champ('romaji'),
+      english: champ('english'),
+      french: champ('french'),
+      japanese: champ('japanese'),
+      original: champ('original'),
+      year: map['year'] is num ? (map['year'] as num).toInt() : null,
+      confidence:
+          map['confidence'] is num ? (map['confidence'] as num).toDouble() : 0,
+    );
   }
 }
