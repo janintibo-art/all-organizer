@@ -747,10 +747,24 @@ class _DetailScreenState extends State<DetailScreen> {
       subtitle: missing
           ? Text('Fichier introuvable',
               style: TextStyle(fontSize: 11.5, color: Palette.shu))
-          : Text(e.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: Palette.muted)),
+          : Row(
+              children: [
+                if (item.episodeHasVf(e)) ...[
+                  Text('VF',
+                      style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: Palette.kin)),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  child: Text(e.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: Palette.muted)),
+                ),
+              ],
+            ),
       trailing: ListenableBuilder(
         listenable: downloads,
         builder: (context, _) {

@@ -43,12 +43,14 @@ class _HomeScreenState extends State<HomeScreen> {
   String _query = '';
   String _genre = '';
   bool _favoritesOnly = false;
+  bool _vfOnly = false;
   String _collection = ''; // '' | todo | watching | done
 
   bool get _filtering =>
       _query.isNotEmpty ||
       _genre.isNotEmpty ||
       _favoritesOnly ||
+      _vfOnly ||
       _collection.isNotEmpty;
 
   @override
@@ -228,6 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
       query: _query,
       genre: _genre,
       favoritesOnly: _favoritesOnly,
+      vfOnly: _vfOnly,
       kind: widget.kind,
       kidsOnly: widget.kidsOnly,
       excludeKids: !widget.kidsOnly,
@@ -355,7 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<Widget> _genreSections() {
-    final grouped = library.groupedByGenre(query: _query);
+    final grouped = library.groupedByGenre(query: _query, vfOnly: _vfOnly);
     final keys = grouped.keys.toList()..sort();
     final slivers = <Widget>[];
     for (final g in keys) {
@@ -402,7 +405,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   controller: _searchController,
                   onChanged: (v) => setState(() => _query = v),
                   decoration: fieldDecoration(
-                    hintText: 'Chercher un titre ou un genre',
+                    hintText: 'Chercher un titre, un genre, ou « vf »',
                     prefixIcon: Icon(Icons.search,
                         color: Palette.muted, size: 20),
                     suffixIcon: _query.isEmpty
@@ -434,6 +437,12 @@ class _HomeScreenState extends State<HomeScreen> {
                   label: 'Favoris',
                   selected: _favoritesOnly,
                   onTap: () => setState(() => _favoritesOnly = !_favoritesOnly),
+                ),
+                const SizedBox(width: 8),
+                _chip(
+                  label: 'VF',
+                  selected: _vfOnly,
+                  onTap: () => setState(() => _vfOnly = !_vfOnly),
                 ),
                 const SizedBox(width: 8),
                 for (final c in const [

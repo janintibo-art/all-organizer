@@ -1,4 +1,5 @@
 import 'media_meta.dart';
+import 'vf.dart';
 
 class Episode {
   final String path;
@@ -144,6 +145,11 @@ class MediaItem {
   /// Chemins des episodes deja regardes.
   List<String> watchedPaths;
 
+  /// Pistes audio constatées pendant la lecture : chemin de l'épisode ->
+  /// présence d'une piste française. Plus sûr que le nom du fichier, qui
+  /// peut se tromper ou ne rien dire ; il l'emporte donc toujours.
+  Map<String, bool> audioFr;
+
   /// Dernier episode lu et position atteinte, pour la reprise.
   String? lastEpisodePath;
   int lastPositionMs;
@@ -182,12 +188,14 @@ class MediaItem {
     this.metaFailCount = 0,
     this.favorite = false,
     List<String>? watchedPaths,
+    Map<String, bool>? audioFr,
     this.lastEpisodePath,
     this.lastPositionMs = 0,
     this.lastPlayedAtMs,
     List<Episode>? episodes,
   })  : genres = genres ?? <String>[],
         watchedPaths = watchedPaths ?? <String>[],
+        audioFr = audioFr ?? <String, bool>{},
         episodes = episodes ?? <Episode>[];
 
   String get title =>
@@ -212,6 +220,44 @@ class MediaItem {
       .toLowerCase()
       .replaceAll(RegExp(r'[^a-z0-9]'), '');
 
+  /// Un épisode a une piste française : ce que la lecture a constaté, à
+  /// défaut ce qu'annoncent le fichier, ses dossiers ou sa piste séparée.
+  bool episodeHasVf(Episode e) {
+    final constate = audioFr[e.path];
+    if (constate != null) return constate;
+    return Vf.inName(Vf.lastParts(e.path)) ||
+        e.externalAudio.any(Vf.inAudioFile);
+  }
+
+  // Calcul mis en cache : les affiches le demandent à chaque affichage.
+  // Le cache suit la liste d'épisodes : un nouveau scan la remplace, et le
+  // compte est alors refait.
+  int? _vfCache;
+  List<Episode>? _vfPour;
+
+  /// Nombre d'épisodes disponibles en VF, bonus exclus.
+  int get vfCount {
+    if (_vfCache == null || !identical(_vfPour, episodes)) {
+      _vfPour = episodes;
+      _vfCache = episodes.where((e) => !e.bonus && episodeHasVf(e)).length;
+    }
+    return _vfCache!;
+  }
+
+  bool get hasVf => vfCount > 0;
+
+  /// Toute la série est en VF, bonus mis à part.
+  bool get fullyVf {
+    final hors = episodes.where((e) => !e.bonus).length;
+    return hors > 0 && vfCount == hors;
+  }
+
+  /// À appeler quand une piste vient d'être constatée.
+  void noteAudio(String path, bool fr) {
+    audioFr[path] = fr;
+    _vfCache = null;
+  }
+
   /// Reprend la progression d'une ancienne version de la meme fiche.
   /// Utilise apres un rescan : le contenu du disque peut changer, ce que
   /// l'utilisateur a deja regarde ne doit pas disparaitre.
@@ -220,6 +266,8 @@ class MediaItem {
     lastPlayedAtMs = ancien.lastPlayedAtMs;
     lastEpisodePath = ancien.lastEpisodePath;
     lastPositionMs = ancien.lastPositionMs;
+    audioFr = {...ancien.audioFr};
+    _vfCache = null;
   }
 
   /// Reconstitue une fiche de metadonnees a partir de ce qui est enregistre.
@@ -368,6 +416,7 @@ class MediaItem {
         'metaFailCount': metaFailCount,
         'favorite': favorite,
         'watchedPaths': watchedPaths,
+        'audioFr': audioFr,
         'lastEpisodePath': lastEpisodePath,
         'lastPositionMs': lastPositionMs,
         'lastPlayedAtMs': lastPlayedAtMs,
@@ -410,6 +459,8 @@ class MediaItem {
         favorite: j['favorite'] as bool? ?? false,
         watchedPaths:
             (j['watchedPaths'] as List?)?.map((e) => e.toString()).toList(),
+        audioFr: (j['audioFr'] as Map?)?.map(
+            (k, v) => MapEntry(k.toString(), v == true)),
         lastEpisodePath: j['lastEpisodePath'] as String?,
         lastPositionMs: j['lastPositionMs'] as int? ?? 0,
         lastPlayedAtMs: j['lastPlayedAtMs'] as int?,

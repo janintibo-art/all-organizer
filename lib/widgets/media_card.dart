@@ -138,6 +138,33 @@ class _MediaCardState extends State<MediaCard> {
                           ),
                         ),
                       ),
+                      // VF : plein si toute la série l'a, en contour si une
+                      // partie des épisodes seulement.
+                      if (item.hasVf)
+                        Positioned(
+                          right: 8,
+                          bottom: item.progress > 0 ? 11 : 5,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: item.fullyVf
+                                  ? Palette.kin
+                                  : Palette.ink.withAlpha(200),
+                              border: Border.all(color: Palette.kin),
+                              borderRadius: BorderRadius.circular(radiusSm),
+                            ),
+                            child: Text(
+                              'VF',
+                              style: TextStyle(
+                                color: item.fullyVf ? Palette.ink : Palette.kin,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                                height: 1.2,
+                              ),
+                            ),
+                          ),
+                        ),
                       if (item.progress > 0)
                         Positioned(
                           left: 0,
@@ -227,6 +254,10 @@ class MediaRow extends StatelessWidget {
                       if (item.year != null) '${item.year}',
                       if (item.genres.isNotEmpty) item.genres.first,
                       '${item.episodes.length} épisodes',
+                      if (item.fullyVf)
+                        'VF'
+                      else if (item.hasVf)
+                        'VF ${item.vfCount}/${item.episodes.where((e) => !e.bonus).length}',
                     ].join(' · '),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,

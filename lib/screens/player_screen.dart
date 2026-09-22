@@ -7,6 +7,7 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../main.dart';
+import '../models/vf.dart';
 import '../services/downloads.dart';
 import '../models/media_item.dart';
 import '../services/library_controller.dart';
@@ -59,8 +60,15 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Timer? _noticeTimer;
 
   bool _locked = false;
-  Timer? _sleepTimer;
+  // Minuterie d'arrêt. L'échéance est une heure réelle, vérifiée chaque
+  // seconde et à chaque avancée de la lecture : un minuteur unique pouvait
+  // être retardé sans que rien ne le montre.
+  Timer? _sleepTick;
   DateTime? _sleepAt;
+  String _sleepChoice = '0';
+  bool _stopAtEnd = false;
+  double? _volumeAvantFondu;
+  final ValueNotifier<String?> _sleepLabel = ValueNotifier(null);
   PlaylistMode _loopMode = PlaylistMode.none;
   bool _subtitleSearchDone = false;
   bool _searchingSubtitles = false;
@@ -89,6 +97,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         index: widget.startIndex,
       ),
     );
+    _applyEndMode();
 
     _subs.add(_player.stream.playlist.listen((event) {
       if (!mounted || event.index == _index) return;
@@ -103,15 +112,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
       });
       _loadExternalSubtitle();
       _loadExternalAudio();
-      if (library.settings.autoNext) {
-        _flash('Épisode suivant');
-      } else {
-        _player.pause();
-        _flash('Lecture en pause : enchaînement désactivé');
-      }
+      _flash('Épisode ${event.index + 1}');
     }));
 
-    _subs.add(_player.stream.position.listen((p) => _position = p));
+    _subs.add(_player.stream.position.listen((p) {
+      _position = p;
+      _checkSleep();
+    }));
 
     _subs.add(_player.stream.duration.listen((d) {
       _duration = d;
@@ -125,6 +132,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       if (!mounted) return;
       setState(() => _tracks = t);
       _applyPreferredLanguages(t);
+      _noteAudioLanguage(t);
     }));
 
     // Sans ça, un codec absent se traduit par un écran noir muet.
@@ -134,7 +142,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }));
 
     _subs.add(_player.stream.completed.listen((done) {
-      if (done) _persist(forceWatched: true);
+      if (!done) return;
+      _persist(forceWatched: true);
+      if (_stopAtEnd) {
+        // Minuterie « fin de l'épisode » : servie, on revient au réglage.
+        _stopAtEnd = false;
+        _sleepChoice = '0';
+        _sleepLabel.value = null;
+        _applyEndMode();
+        _flash('Fin de l\'épisode : lecture arrêtée.');
+      } else if (!library.settings.autoNext &&
+          _index < widget.episodes.length - 1) {
+        _flash('Fin de l\'épisode. Suivant : touche N ou ⏭.');
+      }
     }));
 
     _autoSave = Timer.periodic(const Duration(seconds: 20), (_) => _persist());
@@ -186,8 +206,44 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   /// Applique les langues préférées dès que les pistes sont connues.
+  /// Pistes réelles, sans les choix « automatique » et « aucune ».
+  static List<T> _vraies<T>(List<T> pistes) => pistes.where((p) {
+        final id = (p as dynamic).id as String;
+        return id != 'auto' && id != 'no';
+      }).toList();
+
+  /// Retient si l'épisode en cours a une piste française, d'après les
+  /// étiquettes que le lecteur lit réellement dans le fichier. C'est ce qui
+  /// alimente le filtre VF de la bibliothèque, plus sûr que le nom.
+  void _noteAudioLanguage(Tracks t) {
+    final item = widget.item;
+    if (item == null || widget.episodes.isEmpty) return;
+    final pistes = _vraies(t.audio);
+    if (pistes.isEmpty) return;
+
+    final fr = pistes.any((a) =>
+        Vf.isFrench(a.language) ||
+        Vf.isFrench(a.title) ||
+        Vf.inName(a.title ?? ''));
+    // Sans étiquette de langue, on ne sait rien : le nom du fichier reste
+    // juge, plutôt que de conclure à tort « pas de VF ».
+    final toutesEtiquetees =
+        pistes.every((a) => (a.language ?? '').trim().isNotEmpty);
+    if (!fr && !toutesEtiquetees) return;
+
+    final episode =
+        widget.episodes[_index.clamp(0, widget.episodes.length - 1)];
+    library.noteAudio(item, episode, fr);
+  }
+
   void _applyPreferredLanguages(Tracks tracks) {
     if (_langApplied) return;
+    // Le lecteur signale souvent ses pistes avant de les connaître : on
+    // attend qu'il y en ait de vraies, sinon la langue préférée ne serait
+    // jamais appliquée à cet épisode.
+    if (_vraies(tracks.audio).isEmpty && _vraies(tracks.subtitle).isEmpty) {
+      return;
+    }
     _langApplied = true;
     final audioPref = library.settings.preferredAudio.toLowerCase();
     final subPref = library.settings.preferredSubtitle.toLowerCase();
@@ -408,7 +464,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   void dispose() {
     _autoSave?.cancel();
     _noticeTimer?.cancel();
-    _sleepTimer?.cancel();
+    _sleepTick?.cancel();
+    _sleepLabel.dispose();
     _persist();
     for (final s in _subs) {
       s.cancel();
@@ -438,24 +495,143 @@ class _PlayerScreenState extends State<PlayerScreen> {
     }
   }
 
-  /// Minuterie d'arrêt : la lecture se met en pause toute seule.
-  void _setSleepTimer(int? minutes) {
-    _sleepTimer?.cancel();
-    if (minutes == null) {
-      setState(() => _sleepAt = null);
+  /// Apparence des sous-titres, d'après les réglages. Sert au lecteur et à
+  /// l'aperçu du panneau d'options, qui restent ainsi identiques.
+  TextStyle _subtitleTextStyle({double? size}) {
+    final s = library.settings;
+    const noir = Color(0xFF000000);
+    final taille = size ?? s.subtitleSize;
+
+    List<Shadow>? ombres;
+    Color? fond;
+    if (s.subtitleStyle == 'outline') {
+      // Contour : huit ombres nettes, sans flou, autour de chaque lettre.
+      final double e = (taille / 16).clamp(1.5, 4.0).toDouble();
+      ombres = [
+        for (final dx in [-e, 0.0, e])
+          for (final dy in [-e, 0.0, e])
+            if (dx != 0 || dy != 0)
+              Shadow(offset: Offset(dx, dy), color: noir),
+      ];
+    } else if (s.subtitleStyle == 'box') {
+      fond = const Color(0xAA000000);
+    } else if (s.subtitleStyle == 'solid') {
+      fond = noir;
+    } else {
+      ombres = const [
+        Shadow(blurRadius: 6, color: noir),
+        Shadow(blurRadius: 12, color: noir),
+      ];
+    }
+
+    return TextStyle(
+      fontSize: taille,
+      height: 1.3,
+      color: Color(s.subtitleColor),
+      fontWeight: s.subtitleBold ? FontWeight.w700 : FontWeight.w400,
+      backgroundColor: fond,
+      shadows: ombres,
+    );
+  }
+
+  /// Enchaîner ou s'arrêter à la fin de chaque épisode.
+  ///
+  /// L'ancienne méthode laissait le lecteur passer à l'épisode suivant puis
+  /// le mettait en pause en catastrophe : le suivant démarrait une fraction
+  /// de seconde et devenait « le dernier regardé ». mpv sait faire mieux :
+  /// avec keep-open=always, il ne passe jamais tout seul au fichier suivant
+  /// et reste sur la dernière image. « yes » garde l'enchaînement normal.
+  Future<void> _applyEndMode() async {
+    final platform = _player.platform;
+    if (platform is! NativePlayer) return;
+    final stop = _stopAtEnd || !library.settings.autoNext;
+    try {
+      await platform.setProperty('keep-open', stop ? 'always' : 'yes');
+    } catch (_) {
+      // Sans ce réglage, la lecture continue simplement comme avant.
+    }
+  }
+
+  /// Minuterie d'arrêt. [choice] vaut « 0 », « end » ou un nombre de minutes.
+  void _setSleep(String choice) {
+    _sleepTick?.cancel();
+    _restaurerVolume();
+    _sleepAt = null;
+    _stopAtEnd = false;
+    _sleepChoice = choice;
+
+    if (choice == '0') {
+      _sleepLabel.value = null;
+      _applyEndMode();
       _flash('Minuterie annulée.');
       return;
     }
-    setState(() => _sleepAt = DateTime.now().add(Duration(minutes: minutes)));
-    _sleepTimer = Timer(Duration(minutes: minutes), () {
-      _player.pause();
-      _persist();
-      if (mounted) {
-        setState(() => _sleepAt = null);
-        _flash('Minuterie écoulée, lecture en pause.');
-      }
-    });
-    _flash('Arrêt automatique dans $minutes minutes.');
+
+    if (choice == 'end') {
+      _stopAtEnd = true;
+      _sleepLabel.value = 'Fin d\'épisode';
+      _applyEndMode();
+      _flash('Arrêt à la fin de l\'épisode.');
+      return;
+    }
+
+    final minutes = int.parse(choice);
+    _applyEndMode();
+    _sleepAt = DateTime.now().add(Duration(minutes: minutes));
+    _sleepTick =
+        Timer.periodic(const Duration(seconds: 1), (_) => _checkSleep());
+    _checkSleep();
+    _flash('Arrêt automatique dans ${_duree(Duration(minutes: minutes))}.');
+  }
+
+  /// Compare l'heure à l'échéance, met à jour le compte à rebours et baisse
+  /// le son pendant les vingt dernières secondes.
+  void _checkSleep() {
+    final at = _sleepAt;
+    if (at == null) return;
+    final reste = at.difference(DateTime.now());
+
+    if (reste <= Duration.zero) {
+      _sleepExpire();
+      return;
+    }
+
+    _sleepLabel.value = reste.inSeconds < 60
+        ? '${reste.inSeconds} s'
+        : '${(reste.inSeconds / 60).ceil()} min';
+
+    if (reste.inSeconds <= 20) {
+      _volumeAvantFondu ??= _player.state.volume;
+      final base = _volumeAvantFondu!;
+      _player.setVolume(
+          (base * reste.inMilliseconds / 20000).clamp(0, base).toDouble());
+    }
+  }
+
+  void _sleepExpire() {
+    _sleepTick?.cancel();
+    _sleepAt = null;
+    _sleepChoice = '0';
+    _sleepLabel.value = null;
+    _player.pause();
+    // Le son revient à son niveau après la pause : la prochaine lecture ne
+    // repartira pas muette.
+    _restaurerVolume();
+    _persist();
+    if (mounted) _flash('Minuterie écoulée, lecture en pause.');
+  }
+
+  void _restaurerVolume() {
+    final v = _volumeAvantFondu;
+    if (v == null) return;
+    _volumeAvantFondu = null;
+    _player.setVolume(v);
+  }
+
+  static String _duree(Duration d) {
+    if (d.inMinutes < 60) return '${d.inMinutes} min';
+    final m = d.inMinutes % 60;
+    return '${d.inHours} h${m == 0 ? '' : ' ${m.toString().padLeft(2, '0')}'}';
   }
 
   void _setLoop(PlaylistMode mode) {
@@ -555,16 +731,50 @@ class _PlayerScreenState extends State<PlayerScreen> {
                       controls: _locked ? NoVideoControls : AdaptiveVideoControls,
                       fit: _fit,
                       subtitleViewConfiguration: SubtitleViewConfiguration(
-                        style: TextStyle(
-                          fontSize: library.settings.subtitleSize,
-                          height: 1.3,
-                          color: Colors.white,
-                          shadows: const [
-                            Shadow(blurRadius: 6, color: Colors.black),
-                            Shadow(blurRadius: 12, color: Colors.black),
-                          ],
-                        ),
+                        style: _subtitleTextStyle(),
+                        padding: EdgeInsets.fromLTRB(
+                            16, 0, 16, library.settings.subtitleBottom),
                       ),
+                    ),
+                  ),
+                  // Compte à rebours de la minuterie : visible sans ouvrir
+                  // les options, et une touche l'annule.
+                  Positioned(
+                    top: 12,
+                    left: 12,
+                    child: ValueListenableBuilder<String?>(
+                      valueListenable: _sleepLabel,
+                      builder: (context, label, _) {
+                        if (label == null) return const SizedBox.shrink();
+                        return GestureDetector(
+                          onTap: () => _setSleep('0'),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xCC0D0B0B),
+                              border: Border.all(color: Palette.kin),
+                              borderRadius: BorderRadius.circular(radiusSm),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.bedtime_outlined,
+                                    size: 15, color: Palette.kin),
+                                const SizedBox(width: 6),
+                                Text(label,
+                                    style: TextStyle(
+                                        color: Palette.kin,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600)),
+                                const SizedBox(width: 6),
+                                const Icon(Icons.close,
+                                    size: 14, color: Colors.white70),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
                     ),
                   ),
                   if (_locked)
@@ -651,18 +861,124 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         () => library.updateSettings((s) => s.videoFit = v)),
                   ),
 
-                  _optionTitle('Taille des sous-titres'),
+                  _optionTitle('Sous-titres'),
+                  // Aperçu : le lecteur est souvent en pause pendant qu'on
+                  // règle, et une réplique n'est pas toujours à l'écran.
+                  Container(
+                    width: double.infinity,
+                    height: 110,
+                    alignment: Alignment.bottomCenter,
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [Color(0xFF3A4A5C), Color(0xFF8A6A4A)],
+                      ),
+                      borderRadius: BorderRadius.circular(radiusMd),
+                    ),
+                    child: Text(
+                      'Voici tes sous-titres.',
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      // L'aperçu est plafonné : une taille « énorme » ne tient
+                      // pas dans le cadre, mais les proportions restent vraies.
+                      style: _subtitleTextStyle(
+                          size: library.settings.subtitleSize.clamp(14, 44).toDouble()),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Taille : ${library.settings.subtitleSize.round()}',
+                    style: TextStyle(color: Palette.muted, fontSize: 12),
+                  ),
+                  Slider(
+                    value: library.settings.subtitleSize.clamp(16, 80).toDouble(),
+                    min: 16,
+                    max: 80,
+                    divisions: 32,
+                    activeColor: Palette.shu,
+                    inactiveColor: Palette.raised,
+                    label: '${library.settings.subtitleSize.round()}',
+                    // Pendant le glissement, seul l'écran change ; la
+                    // bibliothèque n'est enregistrée qu'au lâcher.
+                    onChanged: (v) =>
+                        update(() => library.settings.subtitleSize = v),
+                    onChangeEnd: (v) =>
+                        library.updateSettings((s) => s.subtitleSize = v),
+                  ),
                   _choices(
                     values: const {
-                      '24': 'Petite',
+                      '20': 'Très petite',
+                      '26': 'Petite',
                       '32': 'Normale',
                       '40': 'Grande',
                       '52': 'Très grande',
+                      '64': 'Énorme',
                     },
                     selected:
                         library.settings.subtitleSize.round().toString(),
                     onSelected: (v) => update(() => library.updateSettings(
                         (s) => s.subtitleSize = double.parse(v))),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Style',
+                      style: TextStyle(color: Palette.muted, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  _choices(
+                    values: const {
+                      'shadow': 'Ombre',
+                      'outline': 'Contour',
+                      'box': 'Bandeau',
+                      'solid': 'Bandeau opaque',
+                    },
+                    selected: library.settings.subtitleStyle,
+                    onSelected: (v) => update(() =>
+                        library.updateSettings((s) => s.subtitleStyle = v)),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Couleur',
+                      style: TextStyle(color: Palette.muted, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  _choices(
+                    values: const {
+                      '4294967295': 'Blanc', // 0xFFFFFFFF
+                      '4294961979': 'Jaune', // 0xFFFFEB3B
+                      '4286644223': 'Cyan', // 0xFF80FFFF
+                      '4288479098': 'Vert', // 0xFF9CFF7A
+                      '4294942678': 'Rose', // 0xFFFF9FD6
+                    },
+                    selected: library.settings.subtitleColor.toString(),
+                    onSelected: (v) => update(() => library.updateSettings(
+                        (s) => s.subtitleColor = int.parse(v))),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Épaisseur',
+                      style: TextStyle(color: Palette.muted, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  _choices(
+                    values: const {'normal': 'Normale', 'bold': 'Grasse'},
+                    selected:
+                        library.settings.subtitleBold ? 'bold' : 'normal',
+                    onSelected: (v) => update(() => library.updateSettings(
+                        (s) => s.subtitleBold = v == 'bold')),
+                  ),
+                  const SizedBox(height: 12),
+                  Text('Position',
+                      style: TextStyle(color: Palette.muted, fontSize: 12)),
+                  const SizedBox(height: 6),
+                  _choices(
+                    values: const {
+                      '8': 'Tout en bas',
+                      '24': 'Bas',
+                      '72': 'Relevée',
+                      '140': 'Haute',
+                    },
+                    selected:
+                        library.settings.subtitleBottom.round().toString(),
+                    onSelected: (v) => update(() => library.updateSettings(
+                        (s) => s.subtitleBottom = double.parse(v))),
                   ),
 
                   _optionTitle('Saut des flèches'),
@@ -695,24 +1011,47 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         )),
                   ),
 
+                  _optionTitle('À la fin de l\'épisode'),
+                  _choices(
+                    values: const {
+                      'next': 'Enchaîner',
+                      'stop': 'S\'arrêter',
+                    },
+                    selected: library.settings.autoNext ? 'next' : 'stop',
+                    onSelected: (v) => update(() {
+                      library.updateSettings((s) => s.autoNext = v == 'next');
+                      _applyEndMode();
+                    }),
+                  ),
+
                   _optionTitle('Minuterie d\'arrêt'),
                   _choices(
                     values: const {
                       '0': 'Aucune',
+                      'end': 'Fin de l\'épisode',
                       '15': '15 min',
                       '30': '30 min',
+                      '45': '45 min',
                       '60': '1 h',
                       '90': '1 h 30',
+                      '120': '2 h',
                     },
-                    selected: _sleepAt == null
-                        ? '0'
-                        : _sleepAt!
-                            .difference(DateTime.now())
-                            .inMinutes
-                            .toString(),
-                    onSelected: (v) => update(() =>
-                        _setSleepTimer(v == '0' ? null : int.parse(v))),
+                    // On retient le choix lui-même : recalculer le temps
+                    // restant donnait « 14 », qu'aucune case ne portait, et
+                    // la minuterie semblait ne pas avoir été prise.
+                    selected: _sleepChoice,
+                    onSelected: (v) => update(() => _setSleep(v)),
                   ),
+                  if (_sleepChoice != '0' && _sleepChoice != 'end')
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        'Le son baisse doucement pendant les vingt dernières '
+                        'secondes, puis la lecture se met en pause.',
+                        style: TextStyle(
+                            color: Palette.muted, fontSize: 11.5, height: 1.4),
+                      ),
+                    ),
 
                   const SizedBox(height: 18),
                   Wrap(
